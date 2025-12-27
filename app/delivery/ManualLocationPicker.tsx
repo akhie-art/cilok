@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,11 +21,16 @@ const InteractiveMap = dynamic(() => import("@/app/InteractiveMap"), {
   ),
 });
 
+import useSWR from "swr";
+
 interface ManualLocationPickerProps {
   initialLat?: number | null;
   initialLng?: number | null;
   onSelect: (lat: number, lng: number) => void;
 }
+
+// Fetcher function for SWR
+const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 export default function ManualLocationPicker({
   initialLat,
@@ -33,6 +38,28 @@ export default function ManualLocationPicker({
   onSelect,
 }: ManualLocationPickerProps) {
   const [showPicker, setShowPicker] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+
+  // SWR Hook for Geocoding
+  // Only fetch when debouncedQuery is not empty
+  const {
+    data: searchResults,
+    error,
+    isLoading,
+  } = useSWR(
+    debouncedQuery
+      ? `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+          debouncedQuery
+        )}&limit=1`
+      : null,
+    fetcher,
+    {
+      revalidateOnFocus: false, // Don't revalidate on window focus to save requests
+      dedupingInterval: 60000, // Cache for 1 minute
+    }
+  );
+
   // Default coordinate (Grobogan) if none provided
   const [currentPos, setCurrentPos] = useState<{ lat: number; lng: number }>({
     lat: initialLat || -7.0268,
@@ -42,6 +69,28 @@ export default function ManualLocationPicker({
   const handlePositionChange = useCallback((lat: number, lng: number) => {
     setCurrentPos({ lat, lng });
   }, []);
+
+  // Update position when SWR returns data
+  useEffect(() => {
+    if (searchResults && searchResults.length > 0) {
+      const lat = parseFloat(searchResults[0].lat);
+      const lng = parseFloat(searchResults[0].lon);
+      setCurrentPos({ lat, lng });
+    } else if (searchResults && searchResults.length === 0) {
+      // Optional: Toast "Lokasi tidak ditemukan"
+      alert("Lokasi tidak ditemukan");
+    }
+    if (error) {
+      console.error("Search error:", error);
+      alert("Gagal mencari lokasi");
+    }
+  }, [searchResults, error]);
+
+  const handleSearch = () => {
+    if (!searchQuery) return;
+    // Trigger SWR fetch by updating the key dependency
+    setDebouncedQuery(searchQuery);
+  };
 
   const handleConfirm = () => {
     onSelect(currentPos.lat, currentPos.lng);
@@ -76,11 +125,30 @@ export default function ManualLocationPicker({
             </Button>
           </DialogHeader>
 
+          {/* Search Bar */}
+          <div className="p-3 bg-neutral-100 dark:bg-neutral-950/50 border-b border-neutral-200 dark:border-neutral-800 flex gap-2">
+            <input
+              type="text"
+              placeholder="Cari lokasi (cth: Simpang Lima, Semarang)..."
+              className="flex-1 h-10 px-3 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-sm focus:outline-none focus:border-purple-500 transition-colors"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+            />
+            <Button
+              onClick={handleSearch}
+              disabled={isLoading}
+              className="h-10 bg-purple-600 hover:bg-purple-700 text-white rounded-xl px-4 shadow-none"
+            >
+              {isLoading ? "..." : "Cari"}
+            </Button>
+          </div>
+
           <div className="flex-1 bg-neutral-100 dark:bg-neutral-950 relative">
             {showPicker && (
               <InteractiveMap
-                initialLat={initialLat || -7.0268}
-                initialLng={initialLng || 110.9227}
+                initialLat={currentPos.lat}
+                initialLng={currentPos.lng}
                 onPositionChange={handlePositionChange}
               />
             )}
