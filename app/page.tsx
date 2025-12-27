@@ -16,12 +16,13 @@ import {
   DialogDescription
 } from '@/components/ui/dialog'
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
+import { Checkbox } from '@/components/ui/checkbox'
 import { 
   Moon, Sun, ShoppingCart, Plus, Minus, Search, Loader2, Utensils, 
   List, QrCode, Wallet, CalendarDays, Filter, ChevronDown, 
   Printer, Download, X, Camera, Upload, 
   ChevronUp, CheckCircle2, Bell, Bike, User, MapPin, 
-  Phone, ExternalLink, Ban, Check, Package, Clock, Navigation, ArrowRight
+  Phone, ExternalLink, Ban, Check, Package, Clock, Navigation
 } from 'lucide-react'
 import { toast, Toaster } from 'sonner'
 
@@ -96,6 +97,7 @@ export default function POS() {
   
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [orders, setOrders] = useState<DeliveryOrder[]>([]) 
+  const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([])
   const [filter, setFilter] = useState('hari')
   const [lastTransaction, setLastTransaction] = useState<Transaction | null>(null)
 
@@ -113,7 +115,7 @@ export default function POS() {
   const kembalian = metode === 'tunai' ? (bayar ? Number(bayar) - total : 0) : 0
 
   const startTracking = useCallback((orderId: number) => {
-    if (!navigator.geolocation) return toast.error("GPS tidak didukung")
+    if (!navigator.geolocation) return
     if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current)
 
     watchIdRef.current = navigator.geolocation.watchPosition(
@@ -127,7 +129,6 @@ export default function POS() {
       (error) => console.error("GPS Error:", error),
       { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
     )
-    toast.info("Sistem Tracking Aktif", { description: "Lokasi Anda dikirim ke pelanggan." })
   }, [])
 
   const stopTracking = useCallback(() => {
@@ -137,25 +138,6 @@ export default function POS() {
     }
   }, [])
 
-  const quickAmounts = useMemo(() => {
-    if (total === 0) return []
-    const amounts = [total]
-    if (total < 10000) amounts.push(10000)
-    if (total < 20000) amounts.push(20000)
-    if (total < 50000) amounts.push(50000)
-    if (total < 100000) amounts.push(100000)
-    const rounded = Math.ceil(total / 5000) * 5000
-    if (!amounts.includes(rounded)) amounts.push(rounded)
-    return [...new Set(amounts)].sort((a, b) => a - b)
-  }, [total])
-
-  const stats = useMemo(() => {
-    const totalOmzet = transactions.reduce((acc, curr) => acc + (curr.total || 0), 0)
-    const count = transactions.length
-    const avg = count > 0 ? totalOmzet / count : 0
-    return { totalOmzet, count, avg }
-  }, [transactions])
-
   const loadOrders = useCallback(async () => {
     const { data, error } = await supabase
         .from('deliveries')
@@ -163,10 +145,7 @@ export default function POS() {
         .in('status', ['menunggu', 'diterima', 'diproses', 'dikirim']) 
         .order('created_at', { ascending: false })
 
-    if (error) { 
-        console.error("Error fetching orders:", error.message); 
-        return; 
-    }
+    if (error) return
 
     if (data) {
         const parsedOrders = data.map((order) => {
@@ -176,7 +155,7 @@ export default function POS() {
              } else if (Array.isArray(order.items)) {
                 parsedItems = order.items
              } else {
-                 parsedItems = [order.items] as unknown as CartItem[]
+                parsedItems = [order.items] as unknown as CartItem[]
              }
              return { ...order, items: parsedItems } as DeliveryOrder
         })
@@ -231,50 +210,58 @@ export default function POS() {
     }
   }, [filter])
 
-  // --- UPDATED FLOW HANDLER ---
-  const handleProcessOrder = async (id: number, nextStatus: string) => {
-    const order = orders.find(o => o.id === id)
-    if (!order) return
-
-    let toastMsg = `Status diperbarui ke ${nextStatus}`
-
-    // Logic khusus per tahapan
-    if (nextStatus === 'dikirim') {
-        startTracking(id)
-        toastMsg = 'Pesanan dikirim. GPS Aktif!'
-    } else if (nextStatus === 'selesai') {
-        stopTracking()
-        toastMsg = 'Pesanan selesai & masuk laporan.'
+  const handleProcessOrder = async (ids: number[], nextStatus: string) => {
+    if (ids.length === 0) return
+    setLoading(true)
+    try {
+        const ordersToUpdate = orders.filter(o => ids.includes(o.id))
         
-        const transactionPayload = {
-            total: Number(order.total_bayar),
-            subtotal: Number(order.subtotal || order.total_bayar),
-            bayar: Number(order.total_bayar),
-            kembalian: 0,
-            items: order.items,
-            metode_pembayaran: 'delivery',
-            gambar: order.gambar || null,
-            created_at: new Date().toISOString()
+        for (const order of ordersToUpdate) {
+            if (nextStatus === 'dikirim') startTracking(order.id)
+            if (nextStatus === 'selesai') {
+                stopTracking()
+                const transactionPayload = {
+                    total: Number(order.total_bayar),
+                    subtotal: Number(order.subtotal || order.total_bayar),
+                    bayar: Number(order.total_bayar),
+                    kembalian: 0,
+                    items: order.items,
+                    metode_pembayaran: 'delivery',
+                    gambar: order.gambar || null,
+                    created_at: new Date().toISOString()
+                }
+                await supabase.from('transactions').insert([transactionPayload])
+            }
         }
-        await supabase.from('transactions').insert([transactionPayload])
-    } else if (nextStatus === 'ditolak') {
-        stopTracking()
-        toastMsg = 'Pesanan telah dibatalkan.'
-    }
-    
-    const { error } = await supabase
-        .from('deliveries')
-        .update({ status: nextStatus })
-        .eq('id', id)
 
-    if (error) {
+        const { error } = await supabase
+            .from('deliveries')
+            .update({ status: nextStatus })
+            .in('id', ids)
+
+        if (error) throw error
+
+        toast.success(`${ids.length} pesanan diperbarui`)
+        setSelectedOrderIds([])
+        loadOrders()
+        if (nextStatus === 'selesai') loadTransactions()
+    } catch (err) {
         toast.error("Gagal memperbarui status")
-        return
+    } finally {
+        setLoading(false)
     }
+  }
 
-    toast.success(toastMsg)
-    loadOrders() 
-    if (nextStatus === 'selesai') loadTransactions()
+  const toggleSelectOrder = (id: number) => {
+    setSelectedOrderIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id])
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedOrderIds.length === orders.length && orders.length > 0) {
+        setSelectedOrderIds([])
+    } else {
+        setSelectedOrderIds(orders.map(o => o.id))
+    }
   }
 
   const addToCart = (product: Product) => {
@@ -430,6 +417,25 @@ export default function POS() {
   const textMain = "text-neutral-900 dark:text-neutral-100"
   const inputBase = "bg-white dark:bg-neutral-950 border border-neutral-300 dark:border-neutral-800 focus:border-neutral-900 dark:focus:border-neutral-700 focus:ring-0 transition-colors placeholder:text-neutral-400 dark:text-neutral-100"
 
+  const stats = useMemo(() => {
+    const totalOmzet = transactions.reduce((acc, curr) => acc + (curr.total || 0), 0)
+    const count = transactions.length
+    const avg = count > 0 ? totalOmzet / count : 0
+    return { totalOmzet, count, avg }
+  }, [transactions])
+
+  const quickAmounts = useMemo(() => {
+    if (total === 0) return []
+    const amounts = [total]
+    if (total < 10000) amounts.push(10000)
+    if (total < 20000) amounts.push(20000)
+    if (total < 50000) amounts.push(50000)
+    if (total < 100000) amounts.push(100000)
+    const rounded = Math.ceil(total / 5000) * 5000
+    if (!amounts.includes(rounded)) amounts.push(rounded)
+    return [...new Set(amounts)].sort((a, b) => a - b)
+  }, [total])
+
   const MemoizedCheckoutPanel = useMemo(() => {
     return (
         <div className="flex flex-col h-full bg-white dark:bg-neutral-900 overflow-hidden">
@@ -529,7 +535,7 @@ export default function POS() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Dialog open={openOrders} onOpenChange={(open) => { if(!open) setOpenOrders(false); setNotificationCount(0); }}>
+          <Dialog open={openOrders} onOpenChange={(open) => { if(!open) setOpenOrders(false); setNotificationCount(0); setSelectedOrderIds([]); }}>
              <div className="relative" onClick={() => { setOpenOrders(true); setNotificationCount(0); }}>
                 <Button variant="ghost" size="sm" className={`h-10 px-3 gap-2 rounded-xl text-sm font-medium hover:bg-neutral-100 dark:hover:bg-neutral-900 ${orders.length > 0 ? 'text-green-600 dark:text-green-400' : 'text-neutral-900 dark:text-neutral-300'}`}>
                   <Bike className="h-4 w-4" /> 
@@ -537,29 +543,51 @@ export default function POS() {
                 </Button>
                 {notificationCount > 0 && (<span className="absolute top-1 right-1 flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75 shadow-none"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-red-500 text-[8px] text-white font-bold items-center justify-center shadow-none">{notificationCount}</span></span>)}
              </div>
-             <DialogContent className="bg-white dark:bg-neutral-900 border-none sm:border sm:border-neutral-200 sm:dark:border-neutral-800 w-full h-full sm:h-auto sm:max-h-[85vh] sm:max-w-2xl sm:rounded-xl overflow-hidden p-0 gap-0 flex flex-col shadow-none">
+             <DialogContent className="bg-white dark:bg-neutral-900 border-none sm:border sm:border-neutral-200 sm:dark:border-neutral-800 w-full h-full sm:h-auto sm:max-h-[85vh] sm:max-w-3xl sm:rounded-xl overflow-hidden p-0 gap-0 flex flex-col shadow-none">
                  <DialogHeader className="p-4 sm:p-6 border-b border-neutral-200 dark:border-neutral-800 shrink-0 bg-neutral-50 dark:bg-neutral-900/50">
                     <div className="flex items-center justify-between w-full">
                         <div className="space-y-1">
                             <DialogTitle className="text-lg font-semibold flex items-center gap-2 dark:text-neutral-100">
                                 <Bell className="h-5 w-5 text-green-600 dark:text-green-500 shadow-none"/> 
                                 Pesanan Masuk 
-                                {orders.length > 0 && <span className="bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 text-xs px-2 py-0.5 rounded-full shadow-none">{orders.length} Aktif</span>}
                             </DialogTitle>
                             <DialogDescription className="dark:text-neutral-400 text-xs sm:text-sm">Daftar pesanan delivery yang perlu diproses.</DialogDescription>
                         </div>
-                        <Button variant="ghost" size="icon" className="h-10 w-10 -mr-2 rounded-full hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-500 dark:text-neutral-400" onClick={() => setOpenOrders(false)}>
-                            <X className="h-5 w-5"/>
-                        </Button>
+                        <div className="flex items-center gap-2">
+                            {selectedOrderIds.length > 0 && (
+                                <div className="flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 p-1.5 rounded-lg border border-blue-100 dark:border-blue-800 animate-in fade-in zoom-in">
+                                    <span className="text-[10px] font-bold text-blue-600 px-2">{selectedOrderIds.length} Terpilih</span>
+                                    <Button size="sm" onClick={() => handleProcessOrder(selectedOrderIds, 'diterima')} className="h-7 text-[10px] bg-green-600 hover:bg-green-700">Terima</Button>
+                                    <Button size="sm" onClick={() => handleProcessOrder(selectedOrderIds, 'diproses')} className="h-7 text-[10px] bg-indigo-600 hover:bg-indigo-700">Masak</Button>
+                                    <Button size="sm" onClick={() => handleProcessOrder(selectedOrderIds, 'dikirim')} className="h-7 text-[10px] bg-blue-600 hover:bg-blue-700">Kirim</Button>
+                                    <Button variant="ghost" size="icon" onClick={() => setSelectedOrderIds([])} className="h-7 w-7 text-neutral-400 hover:text-red-500"><X className="h-4 w-4"/></Button>
+                                </div>
+                            )}
+                            <Button variant="ghost" size="icon" className="h-10 w-10 rounded-full hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-500 dark:text-neutral-400" onClick={() => setOpenOrders(false)}>
+                                <X className="h-5 w-5"/>
+                            </Button>
+                        </div>
                     </div>
                  </DialogHeader>
+                 {/* BAGIAN PILIH SEMUA */}
+                 <div className="px-6 py-2 border-b bg-neutral-50 dark:bg-neutral-800/50 flex items-center gap-4">
+                    <div className="flex items-center gap-2 cursor-pointer select-none" onClick={toggleSelectAll}>
+                        <Checkbox checked={selectedOrderIds.length === orders.length && orders.length > 0} />
+                        <span className="text-[11px] font-bold uppercase opacity-60">Pilih Semua</span>
+                    </div>
+                 </div>
                  <div className="flex-1 overflow-y-auto bg-neutral-100/50 dark:bg-neutral-950 p-4 shadow-none">
                      <div className="space-y-4 shadow-none">
                         {orders.length === 0 ? (<div className="flex flex-col items-center justify-center h-64 text-neutral-400 dark:text-neutral-600 gap-3 shadow-none"><Bike className="h-8 w-8 opacity-20 shadow-none" /><p className="text-sm font-medium shadow-none">Tidak ada pesanan aktif</p></div>) : (
                             orders.map((order) => (
-                                <div key={order.id} className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl overflow-hidden shadow-none">
+                                <div key={order.id} className={`bg-white dark:bg-neutral-900 border transition-all rounded-xl overflow-hidden shadow-none ${selectedOrderIds.includes(order.id) ? 'border-blue-500 ring-2 ring-blue-500/10' : 'border-neutral-200 dark:border-neutral-800'}`}>
                                     <div className={`p-3 border-b border-neutral-100 dark:border-neutral-800 flex justify-between items-center ${order.status === 'menunggu' ? 'bg-yellow-50/50 dark:bg-yellow-900/10' : order.status === 'dikirim' ? 'bg-blue-50/50 dark:bg-blue-900/10' : 'bg-green-50/50 dark:bg-green-900/10'}`}>
-                                        <div className="flex items-center gap-2 shadow-none">
+                                        <div className="flex items-center gap-3 shadow-none">
+                                            <Checkbox 
+                                                checked={selectedOrderIds.includes(order.id)}
+                                                onCheckedChange={() => toggleSelectOrder(order.id)}
+                                                className="border-neutral-300 dark:border-neutral-700"
+                                            />
                                             <span className={`text-[9px] font-bold px-2.5 py-1 rounded-full uppercase tracking-widest shadow-none ${
                                                 order.status === 'menunggu' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500' : 
                                                 order.status === 'diterima' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' :
@@ -587,20 +615,20 @@ export default function POS() {
                                         <div className="flex flex-col gap-2">
                                             {order.status === 'menunggu' && (
                                                 <div className="grid grid-cols-2 gap-3 shadow-none">
-                                                    <Button variant="outline" onClick={() => handleProcessOrder(order.id, 'ditolak')} className="h-9 text-xs border-red-200 text-red-600 hover:bg-red-50 shadow-none"><Ban className="h-3.5 w-3.5 mr-2" /> Tolak</Button>
-                                                    <Button onClick={() => handleProcessOrder(order.id, 'diterima')} className="h-9 text-xs bg-green-600 hover:bg-green-700 text-white shadow-none"><CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Terima</Button>
+                                                    <Button variant="outline" onClick={() => handleProcessOrder([order.id], 'ditolak')} className="h-9 text-xs border-red-200 text-red-600 hover:bg-red-50 shadow-none"><Ban className="h-3.5 w-3.5 mr-2" /> Tolak</Button>
+                                                    <Button onClick={() => handleProcessOrder([order.id], 'diterima')} className="h-9 text-xs bg-green-600 hover:bg-green-700 text-white shadow-none"><CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Terima</Button>
                                                 </div>
                                             )}
                                             {order.status === 'diterima' && (
-                                                <Button onClick={() => handleProcessOrder(order.id, 'diproses')} className="w-full h-9 text-xs bg-blue-600 hover:bg-blue-700 text-white shadow-none"><Package className="h-3.5 w-3.5 mr-2" /> Proses Masak</Button>
+                                                <Button onClick={() => handleProcessOrder([order.id], 'diproses')} className="w-full h-9 text-xs bg-blue-600 hover:bg-blue-700 text-white shadow-none"><Package className="h-3.5 w-3.5 mr-2" /> Proses Masak</Button>
                                             )}
                                             {order.status === 'diproses' && (
-                                                <Button onClick={() => handleProcessOrder(order.id, 'dikirim')} className="w-full h-9 text-xs bg-indigo-600 hover:bg-indigo-700 text-white shadow-none"><Bike className="h-3.5 w-3.5 mr-2" /> Kirim Pesanan</Button>
+                                                <Button onClick={() => handleProcessOrder([order.id], 'dikirim')} className="w-full h-9 text-xs bg-indigo-600 hover:bg-indigo-700 text-white shadow-none"><Bike className="h-3.5 w-3.5 mr-2" /> Kirim Pesanan</Button>
                                             )}
                                             {order.status === 'dikirim' && (
                                                 <div className="space-y-2">
                                                     <div className="flex items-center gap-2 text-[10px] font-bold text-blue-500 animate-pulse px-1 uppercase tracking-widest"><Navigation className="h-3 w-3" /> GPS Tracking Aktif...</div>
-                                                    <Button onClick={() => handleProcessOrder(order.id, 'selesai')} className="w-full h-9 text-xs bg-green-700 hover:bg-green-800 text-white shadow-none"><Check className="h-3.5 w-3.5 mr-2" /> Tandai Selesai</Button>
+                                                    <Button onClick={() => handleProcessOrder([order.id], 'selesai')} className="w-full h-9 text-xs bg-green-700 hover:bg-green-800 text-white shadow-none"><Check className="h-3.5 w-3.5 mr-2" /> Tandai Selesai</Button>
                                                 </div>
                                             )}
                                         </div>
