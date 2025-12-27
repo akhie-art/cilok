@@ -61,7 +61,7 @@ interface DeliveryForm {
 
 interface UserSession {
   name: string
-  phone: string // Menggunakan phone sesuai sistem login baru
+  phone: string 
   role?: string
 }
 
@@ -144,14 +144,13 @@ export default function DeliveryPage() {
     }
   }
 
-  // --- PERBAIKAN: AUTO-FILL SESSION LOGIC ---
+  // --- AUTO-FILL SESSION LOGIC ---
   useEffect(() => {
     const sessionStr = localStorage.getItem('user_session')
     if (sessionStr) {
       try {
         const userData = JSON.parse(sessionStr)
         setUser(userData)
-        // Mengisi otomatis form dari data session agar Nama dan WhatsApp terisi
         setForm(prev => ({ 
             ...prev, 
             nama: userData.name || '', 
@@ -385,14 +384,14 @@ export default function DeliveryPage() {
     }
   }
 
-  // --- STYLE CONSTANTS (ORIGINAL UI) ---
+  // --- STYLE CONSTANTS ---
   const glassEffect = {
     WebkitBackdropFilter: 'blur(16px)',
     backdropFilter: 'blur(16px)',
   }
   const inputBase = "bg-white dark:bg-neutral-950 border border-neutral-300 dark:border-neutral-800 focus:border-neutral-900 dark:focus:border-neutral-700 focus:ring-0 transition-colors placeholder:text-neutral-400 dark:text-neutral-100"
 
-  // --- CART RENDERER (ORIGINAL UI) ---
+  // --- CART RENDERER ---
   const renderCartContent = () => (
     <>
         <div className="flex-1 min-h-0 bg-white dark:bg-neutral-900 relative flex flex-col">
@@ -636,7 +635,7 @@ export default function DeliveryPage() {
          </div>
       </header>
 
-      {/* --- MODAL RIWAYAT / TRACKING (ORIGINAL UI) --- */}
+      {/* --- MODAL RIWAYAT / TRACKING --- */}
       <Dialog open={showHistoryModal} onOpenChange={setShowHistoryModal}>
         <DialogContent className="bg-white dark:bg-neutral-900 w-[95vw] h-[90vh] sm:max-w-xl sm:rounded-3xl overflow-hidden p-0 flex flex-col fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 border border-neutral-200 dark:border-neutral-800">
             <DialogHeader className="p-5 border-b border-neutral-100 dark:border-neutral-800 flex flex-row items-center justify-between shrink-0 bg-white dark:bg-neutral-900">
@@ -671,8 +670,8 @@ export default function DeliveryPage() {
                                 return (
                                     <div key={order.id} className="bg-white dark:bg-neutral-900 border border-neutral-100 dark:border-neutral-800 rounded-2xl overflow-hidden shadow-sm">
                                         
-                                        {/* PETA TRACKING (Muncul jika diproses) */}
-                                        {order.status === 'diterima' && order.kurir_lat && (
+                                        {/* PERBAIKAN: PETA TRACKING muncul saat diproses atau dikirim */}
+                                        {(order.status === 'diproses' || order.status === 'dikirim') && order.kurir_lat && (
                                             <div className="h-52 w-full relative">
                                                 <OrderMap 
                                                     userLat={order.latitude} 
@@ -681,7 +680,7 @@ export default function DeliveryPage() {
                                                     kurirLng={order.kurir_lng!} 
                                                 />
                                                 <div className="absolute top-3 left-3 z-[1000] bg-white/90 dark:bg-neutral-900/90 px-3 py-1.5 rounded-full text-[10px] font-bold shadow-sm flex items-center gap-2 border border-neutral-200 dark:border-neutral-800">
-                                                    <div className="h-2 w-2 bg-blue-500 rounded-full animate-ping"></div> KURIR SEDANG MENUJU LOKASI
+                                                    <div className="h-2 w-2 bg-blue-500 rounded-full animate-ping"></div> {order.status === 'dikirim' ? 'KURIR SEDANG MENUJU LOKASI' : 'PESANAN SEDANG DISIAPKAN'}
                                                 </div>
                                             </div>
                                         )}
@@ -765,7 +764,7 @@ export default function DeliveryPage() {
         </DialogContent>
       </Dialog>
 
-      {/* --- MODAL CHECKOUT MOBILE (ORIGINAL UI) --- */}
+      {/* --- MODAL CHECKOUT MOBILE --- */}
       <Dialog open={showCheckoutModal} onOpenChange={setShowCheckoutModal}>
         <DialogContent className="bg-white dark:bg-neutral-900 w-[90vw] h-[85vh] sm:h-auto sm:max-h-[85vh] sm:max-w-md rounded-3xl overflow-hidden p-0 flex flex-col fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 border border-neutral-200 dark:border-neutral-800">
             <DialogHeader className="p-5 border-b border-neutral-100 dark:border-neutral-800 flex flex-row items-center justify-between shrink-0 bg-white dark:bg-neutral-900">
@@ -777,7 +776,7 @@ export default function DeliveryPage() {
         </DialogContent>
       </Dialog>
 
-      {/* --- MOBILE CART BAR (ORIGINAL UI) --- */}
+      {/* --- MOBILE CART BAR --- */}
       {cart.length > 0 && !showCheckoutModal && (
           <div className="fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-neutral-950/95 border-t border-neutral-200 dark:border-neutral-800 p-4 lg:hidden backdrop-blur-md">
              <div className="flex items-center justify-between gap-5">
@@ -792,7 +791,7 @@ export default function DeliveryPage() {
           </div>
       )}
 
-      {/* --- CATALOG AREA (ORIGINAL UI) --- */}
+      {/* --- CATALOG AREA --- */}
       <main className="container mx-auto p-3 md:p-4 lg:p-6 max-w-7xl pb-24 lg:pb-12">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-8 items-start">
           
