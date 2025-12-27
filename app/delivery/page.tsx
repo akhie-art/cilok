@@ -21,7 +21,7 @@ import {
   Search, Plus, Minus, ChevronDown, LogOut, Lock, 
   History, ShoppingBag, Bike, ExternalLink, Trash2, Utensils,
   Sun, Moon, X, CreditCard, Banknote, UploadCloud, Image as ImageIcon, Clock,
-  Navigation, Timer, XCircle, Package 
+  Navigation, Timer, XCircle, Package,ThumbsUp 
 } from 'lucide-react'
 import { toast, Toaster } from 'sonner'
 
@@ -61,7 +61,7 @@ interface DeliveryForm {
 
 interface UserSession {
   name: string
-  email: string
+  phone: string // Menggunakan phone sesuai sistem login baru
   role?: string
 }
 
@@ -80,15 +80,14 @@ interface MyOrder {
   subtotal: number
   ongkir: number
   total_bayar: number
-  status: 'baru' | 'diproses' | 'selesai' | 'ditolak'
+  status: 'menunggu' |'diterima'| 'diproses'|'dikirim' | 'selesai' | 'ditolak'
   metode_pembayaran: string
   gambar: string | null 
 }
 
 // --- DATA PRODUK ---
 const products: Product[] = [
-  { id: 1, name: 'Oseng Baut', price: 10000, category: 'Premium' },
-  { id: 2, name: 'Jus Suket Gajah', price: 12000, category: 'Premium' },
+  { id: 1, name: 'Cilok Ayam Suwir', price: 7000, category: 'Premium' },
 ]
 
 const categories = ["Semua", ...new Set(products.map(p => p.category))]
@@ -107,6 +106,9 @@ export default function DeliveryPage() {
   const [loadingLoc, setLoadingLoc] = useState(false)
   const [sending, setSending] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [isDarkMode, setIsDarkMode] = useState(false)
+
+  // --- FORM STATE ---
   const [form, setForm] = useState<DeliveryForm>({
     nama: '',
     telepon: '',
@@ -116,8 +118,6 @@ export default function DeliveryPage() {
     googleMapUrl: '',
     paymentMethod: 'COD'
   })
-
-  const [isDarkMode, setIsDarkMode] = useState(false)
 
   // --- THEME LOGIC ---
   useEffect(() => {
@@ -144,14 +144,19 @@ export default function DeliveryPage() {
     }
   }
 
-  // --- SESSION LOGIC ---
+  // --- PERBAIKAN: AUTO-FILL SESSION LOGIC ---
   useEffect(() => {
     const sessionStr = localStorage.getItem('user_session')
     if (sessionStr) {
       try {
         const userData = JSON.parse(sessionStr)
         setUser(userData)
-        setForm(prev => ({ ...prev, nama: userData.name }))
+        // Mengisi otomatis form dari data session agar Nama dan WhatsApp terisi
+        setForm(prev => ({ 
+            ...prev, 
+            nama: userData.name || '', 
+            telepon: userData.phone || '' 
+        }))
       } catch (e) {
         console.error("Gagal parse session", e)
       }
@@ -195,7 +200,6 @@ export default function DeliveryPage() {
 
     loadMyOrders()
 
-    // 1. Realtime Subscription (Instan jika ada update di DB)
     const channel = supabase
       .channel('realtime-orders')
       .on(
@@ -212,7 +216,6 @@ export default function DeliveryPage() {
             order.id === updatedOrder.id ? updatedOrder : order
           ))
           
-          // Toast pemberitahuan status jika berubah
           if (payload.old.status !== payload.new.status) {
              toast.info(`Status Pesanan #${payload.new.id}: ${payload.new.status.toUpperCase()}`)
           }
@@ -220,7 +223,6 @@ export default function DeliveryPage() {
       )
       .subscribe()
 
-    // 2. Fallback Polling (7 Detik) jika Realtime terputus
     const interval = setInterval(loadMyOrders, 7000)
 
     return () => {
@@ -351,7 +353,7 @@ export default function DeliveryPage() {
             subtotal: subtotal,
             ongkir: ongkir,
             total_bayar: total,
-            status: 'baru',
+            status: 'menunggu',
             metode_pembayaran: form.paymentMethod.toLowerCase(),
             gambar: form.buktiTransferUrl || null 
         }])
@@ -383,12 +385,14 @@ export default function DeliveryPage() {
     }
   }
 
+  // --- STYLE CONSTANTS (ORIGINAL UI) ---
   const glassEffect = {
     WebkitBackdropFilter: 'blur(16px)',
     backdropFilter: 'blur(16px)',
   }
   const inputBase = "bg-white dark:bg-neutral-950 border border-neutral-300 dark:border-neutral-800 focus:border-neutral-900 dark:focus:border-neutral-700 focus:ring-0 transition-colors placeholder:text-neutral-400 dark:text-neutral-100"
 
+  // --- CART RENDERER (ORIGINAL UI) ---
   const renderCartContent = () => (
     <>
         <div className="flex-1 min-h-0 bg-white dark:bg-neutral-900 relative flex flex-col">
@@ -617,7 +621,7 @@ export default function DeliveryPage() {
                     <div className="absolute right-0 mt-3 w-56 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl py-1 z-40 shadow-none animate-in fade-in zoom-in-95 duration-200">
                         <div className="px-5 py-4 border-b border-neutral-100 dark:border-neutral-800">
                             <p className="text-sm font-bold truncate dark:text-neutral-100">{user.name}</p>
-                            <p className="text-[10px] text-neutral-500 truncate mt-0.5">{user.email}</p>
+                            <p className="text-[10px] text-neutral-500 truncate mt-0.5">{user.phone}</p>
                         </div>
                         <button onClick={handleLogout} className="w-full text-left px-5 py-3 text-xs font-bold text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-3 transition-colors">
                            <LogOut className="h-4 w-4" /> Keluar Akun
@@ -632,7 +636,7 @@ export default function DeliveryPage() {
          </div>
       </header>
 
-      {/* --- MODAL RIWAYAT / TRACKING --- */}
+      {/* --- MODAL RIWAYAT / TRACKING (ORIGINAL UI) --- */}
       <Dialog open={showHistoryModal} onOpenChange={setShowHistoryModal}>
         <DialogContent className="bg-white dark:bg-neutral-900 w-[95vw] h-[90vh] sm:max-w-xl sm:rounded-3xl overflow-hidden p-0 flex flex-col fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 border border-neutral-200 dark:border-neutral-800">
             <DialogHeader className="p-5 border-b border-neutral-100 dark:border-neutral-800 flex flex-row items-center justify-between shrink-0 bg-white dark:bg-neutral-900">
@@ -654,8 +658,10 @@ export default function DeliveryPage() {
                             myOrders.map((order) => {
                                 // Logika Stepper Status
                                 const steps = [
-                                    { label: 'Diterima', key: 'baru', icon: Package },
-                                    { label: 'Dimasak', key: 'diproses', icon: Timer },
+                                    { label: 'Menunggu', key: 'menunggu', icon: Package },
+                                    { label: 'Diterima', key: 'diterima', icon: ThumbsUp },
+                                    { label: 'Diproses', key: 'diproses', icon: Timer },
+                                    { label: 'Dikirim', key: 'dikirim', icon: Bike },
                                     { label: 'Selesai', key: 'selesai', icon: CheckCircle2 },
                                 ];
                                 
@@ -666,7 +672,7 @@ export default function DeliveryPage() {
                                     <div key={order.id} className="bg-white dark:bg-neutral-900 border border-neutral-100 dark:border-neutral-800 rounded-2xl overflow-hidden shadow-sm">
                                         
                                         {/* PETA TRACKING (Muncul jika diproses) */}
-                                        {order.status === 'diproses' && order.kurir_lat && (
+                                        {order.status === 'diterima' && order.kurir_lat && (
                                             <div className="h-52 w-full relative">
                                                 <OrderMap 
                                                     userLat={order.latitude} 
@@ -759,7 +765,7 @@ export default function DeliveryPage() {
         </DialogContent>
       </Dialog>
 
-      {/* --- MODAL CHECKOUT MOBILE --- */}
+      {/* --- MODAL CHECKOUT MOBILE (ORIGINAL UI) --- */}
       <Dialog open={showCheckoutModal} onOpenChange={setShowCheckoutModal}>
         <DialogContent className="bg-white dark:bg-neutral-900 w-[90vw] h-[85vh] sm:h-auto sm:max-h-[85vh] sm:max-w-md rounded-3xl overflow-hidden p-0 flex flex-col fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 border border-neutral-200 dark:border-neutral-800">
             <DialogHeader className="p-5 border-b border-neutral-100 dark:border-neutral-800 flex flex-row items-center justify-between shrink-0 bg-white dark:bg-neutral-900">
@@ -771,7 +777,7 @@ export default function DeliveryPage() {
         </DialogContent>
       </Dialog>
 
-      {/* --- MOBILE CART BAR --- */}
+      {/* --- MOBILE CART BAR (ORIGINAL UI) --- */}
       {cart.length > 0 && !showCheckoutModal && (
           <div className="fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-neutral-950/95 border-t border-neutral-200 dark:border-neutral-800 p-4 lg:hidden backdrop-blur-md">
              <div className="flex items-center justify-between gap-5">
@@ -786,7 +792,7 @@ export default function DeliveryPage() {
           </div>
       )}
 
-      {/* --- CATALOG AREA --- */}
+      {/* --- CATALOG AREA (ORIGINAL UI) --- */}
       <main className="container mx-auto p-3 md:p-4 lg:p-6 max-w-7xl pb-24 lg:pb-12">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-8 items-start">
           

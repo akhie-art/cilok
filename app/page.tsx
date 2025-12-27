@@ -21,7 +21,7 @@ import {
   List, QrCode, Wallet, CalendarDays, Filter, ChevronDown, 
   Printer, Download, X, Camera, Upload, 
   ChevronUp, CheckCircle2, Bell, Bike, User, MapPin, 
-  Phone, ExternalLink, Ban, Check, Package, Clock, Navigation
+  Phone, ExternalLink, Ban, Check, Package, Clock, Navigation, ArrowRight
 } from 'lucide-react'
 import { toast, Toaster } from 'sonner'
 
@@ -160,7 +160,7 @@ export default function POS() {
     const { data, error } = await supabase
         .from('deliveries')
         .select('*')
-        .in('status', ['baru', 'diproses']) 
+        .in('status', ['menunggu', 'diterima', 'diproses', 'dikirim']) 
         .order('created_at', { ascending: false })
 
     if (error) { 
@@ -184,7 +184,7 @@ export default function POS() {
 
         let newItemsCount = 0
         parsedOrders.forEach(order => {
-            if (order.status === 'baru' && !notifiedOrderIds.current.has(order.id)) {
+            if (order.status === 'menunggu' && !notifiedOrderIds.current.has(order.id)) {
                 newItemsCount++
                 notifiedOrderIds.current.add(order.id)
             }
@@ -231,21 +231,20 @@ export default function POS() {
     }
   }, [filter])
 
-  const handleProcessOrder = async (id: number, action: 'proses' | 'tolak' | 'selesai') => {
+  // --- UPDATED FLOW HANDLER ---
+  const handleProcessOrder = async (id: number, nextStatus: string) => {
     const order = orders.find(o => o.id === id)
     if (!order) return
 
-    let newStatus = ''
-    let toastMsg = ''
+    let toastMsg = `Status diperbarui ke ${nextStatus}`
 
-    if (action === 'proses') {
-        newStatus = 'diproses' 
-        toastMsg = 'Pesanan diterima & diproses.'
+    // Logic khusus per tahapan
+    if (nextStatus === 'dikirim') {
         startTracking(id)
-    } else if (action === 'selesai') {
-        newStatus = 'selesai'
-        toastMsg = 'Pesanan selesai!'
+        toastMsg = 'Pesanan dikirim. GPS Aktif!'
+    } else if (nextStatus === 'selesai') {
         stopTracking()
+        toastMsg = 'Pesanan selesai & masuk laporan.'
         
         const transactionPayload = {
             total: Number(order.total_bayar),
@@ -258,15 +257,14 @@ export default function POS() {
             created_at: new Date().toISOString()
         }
         await supabase.from('transactions').insert([transactionPayload])
-    } else {
-        newStatus = 'ditolak'
-        toastMsg = 'Pesanan ditolak.'
+    } else if (nextStatus === 'ditolak') {
         stopTracking()
+        toastMsg = 'Pesanan telah dibatalkan.'
     }
     
     const { error } = await supabase
         .from('deliveries')
-        .update({ status: newStatus })
+        .update({ status: nextStatus })
         .eq('id', id)
 
     if (error) {
@@ -276,7 +274,7 @@ export default function POS() {
 
     toast.success(toastMsg)
     loadOrders() 
-    if (action === 'selesai') loadTransactions()
+    if (nextStatus === 'selesai') loadTransactions()
   }
 
   const addToCart = (product: Product) => {
@@ -432,7 +430,6 @@ export default function POS() {
   const textMain = "text-neutral-900 dark:text-neutral-100"
   const inputBase = "bg-white dark:bg-neutral-950 border border-neutral-300 dark:border-neutral-800 focus:border-neutral-900 dark:focus:border-neutral-700 focus:ring-0 transition-colors placeholder:text-neutral-400 dark:text-neutral-100"
 
-  // --- MEMOIZED CHECKOUT PANEL UNTUK MENGHINDARI RE-MOUNTING ---
   const MemoizedCheckoutPanel = useMemo(() => {
     return (
         <div className="flex flex-col h-full bg-white dark:bg-neutral-900 overflow-hidden">
@@ -561,8 +558,17 @@ export default function POS() {
                         {orders.length === 0 ? (<div className="flex flex-col items-center justify-center h-64 text-neutral-400 dark:text-neutral-600 gap-3 shadow-none"><Bike className="h-8 w-8 opacity-20 shadow-none" /><p className="text-sm font-medium shadow-none">Tidak ada pesanan aktif</p></div>) : (
                             orders.map((order) => (
                                 <div key={order.id} className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl overflow-hidden shadow-none">
-                                    <div className={`p-3 border-b border-neutral-100 dark:border-neutral-800 flex justify-between items-center ${order.status === 'baru' ? 'bg-green-50/50 dark:bg-green-900/10' : 'bg-blue-50/50 dark:bg-blue-900/10'}`}>
-                                        <div className="flex items-center gap-2 shadow-none"><span className={`text-[9px] font-bold px-2.5 py-1 rounded-full uppercase tracking-widest shadow-none ${order.status === 'baru' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500' : order.status === 'diproses' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : order.status === 'selesai' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>{order.status}</span><span suppressHydrationWarning className="text-xs text-neutral-500 dark:text-neutral-500 font-mono shadow-none">{new Date(order.created_at).toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})}</span></div>
+                                    <div className={`p-3 border-b border-neutral-100 dark:border-neutral-800 flex justify-between items-center ${order.status === 'menunggu' ? 'bg-yellow-50/50 dark:bg-yellow-900/10' : order.status === 'dikirim' ? 'bg-blue-50/50 dark:bg-blue-900/10' : 'bg-green-50/50 dark:bg-green-900/10'}`}>
+                                        <div className="flex items-center gap-2 shadow-none">
+                                            <span className={`text-[9px] font-bold px-2.5 py-1 rounded-full uppercase tracking-widest shadow-none ${
+                                                order.status === 'menunggu' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500' : 
+                                                order.status === 'diterima' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' :
+                                                order.status === 'diproses' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400' :
+                                                order.status === 'dikirim' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' :
+                                                'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                                            }`}>{order.status}</span>
+                                            <span suppressHydrationWarning className="text-xs text-neutral-500 dark:text-neutral-500 font-mono shadow-none">{new Date(order.created_at).toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})}</span>
+                                        </div>
                                         <span suppressHydrationWarning className="text-xs font-semibold dark:text-neutral-200 shadow-none">Total: Rp {order.total_bayar.toLocaleString('id-ID')}</span>
                                     </div>
                                     <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4 shadow-none">
@@ -578,14 +584,26 @@ export default function POS() {
                                         </div>
                                     </div>
                                     <div className="p-3 bg-neutral-50 dark:bg-neutral-900 border-t border-neutral-100 dark:border-neutral-800 shadow-none">
-                                        {order.status === 'baru' ? (
-                                            <div className="grid grid-cols-2 gap-3 shadow-none"><Button variant="outline" onClick={() => handleProcessOrder(order.id, 'tolak')} className="h-9 text-xs border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 shadow-none"><Ban className="h-3.5 w-3.5 mr-2 shadow-none" /> Tolak</Button><Button onClick={() => handleProcessOrder(order.id, 'proses')} className="h-9 text-xs bg-green-600 dark:bg-green-700 hover:bg-green-700 dark:hover:bg-green-800 text-white shadow-none"><CheckCircle2 className="h-3.5 w-3.5 mr-2 shadow-none" /> Terima</Button></div>
-                                        ) : (
-                                            <div className="flex flex-col gap-2">
-                                                <div className="flex items-center gap-2 text-[10px] font-bold text-blue-500 animate-pulse px-1 uppercase tracking-widest"><Navigation className="h-3 w-3" /> GPS Tracking Sedang Aktif...</div>
-                                                <Button onClick={() => handleProcessOrder(order.id, 'selesai')} className="w-full h-9 text-xs bg-blue-600 dark:bg-blue-700 hover:bg-blue-700 dark:hover:bg-blue-800 text-white shadow-none"><Check className="h-3.5 w-3.5 mr-2 shadow-none" /> Tandai Selesai</Button>
-                                            </div>
-                                        )}
+                                        <div className="flex flex-col gap-2">
+                                            {order.status === 'menunggu' && (
+                                                <div className="grid grid-cols-2 gap-3 shadow-none">
+                                                    <Button variant="outline" onClick={() => handleProcessOrder(order.id, 'ditolak')} className="h-9 text-xs border-red-200 text-red-600 hover:bg-red-50 shadow-none"><Ban className="h-3.5 w-3.5 mr-2" /> Tolak</Button>
+                                                    <Button onClick={() => handleProcessOrder(order.id, 'diterima')} className="h-9 text-xs bg-green-600 hover:bg-green-700 text-white shadow-none"><CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Terima</Button>
+                                                </div>
+                                            )}
+                                            {order.status === 'diterima' && (
+                                                <Button onClick={() => handleProcessOrder(order.id, 'diproses')} className="w-full h-9 text-xs bg-blue-600 hover:bg-blue-700 text-white shadow-none"><Package className="h-3.5 w-3.5 mr-2" /> Proses Masak</Button>
+                                            )}
+                                            {order.status === 'diproses' && (
+                                                <Button onClick={() => handleProcessOrder(order.id, 'dikirim')} className="w-full h-9 text-xs bg-indigo-600 hover:bg-indigo-700 text-white shadow-none"><Bike className="h-3.5 w-3.5 mr-2" /> Kirim Pesanan</Button>
+                                            )}
+                                            {order.status === 'dikirim' && (
+                                                <div className="space-y-2">
+                                                    <div className="flex items-center gap-2 text-[10px] font-bold text-blue-500 animate-pulse px-1 uppercase tracking-widest"><Navigation className="h-3 w-3" /> GPS Tracking Aktif...</div>
+                                                    <Button onClick={() => handleProcessOrder(order.id, 'selesai')} className="w-full h-9 text-xs bg-green-700 hover:bg-green-800 text-white shadow-none"><Check className="h-3.5 w-3.5 mr-2" /> Tandai Selesai</Button>
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                             ))
@@ -619,9 +637,6 @@ export default function POS() {
                     </Button>
                   </div>
                 </div>
-                <div className="sm:hidden mt-3">
-                    <Button size="sm" variant="outline" onClick={handleExportCSV} className="w-full h-9 text-xs gap-2 font-semibold border-neutral-200 dark:border-neutral-800 dark:text-neutral-300 bg-white dark:bg-neutral-900"><Download className="h-4 w-4"/> Ekspor Laporan CSV</Button>
-                </div>
               </DialogHeader>
               <div className="grid grid-cols-2 md:grid-cols-4 border-b border-neutral-200 dark:border-neutral-800 shrink-0 bg-neutral-50/30 dark:bg-neutral-950/30 shadow-none">
                  <div className="p-4 sm:p-5 flex flex-col gap-1.5 border-r border-neutral-200 dark:border-neutral-800 shadow-none"><span className="text-[10px] uppercase text-neutral-500 dark:text-neutral-500 font-semibold tracking-widest shadow-none">Total Omzet</span><div suppressHydrationWarning className="flex items-center gap-1.5 text-neutral-900 dark:text-neutral-100 font-semibold text-lg sm:text-2xl italic tracking-tight shadow-none">Rp {stats.totalOmzet.toLocaleString('id-ID')}</div></div>
@@ -646,6 +661,7 @@ export default function POS() {
         </div>
       </main>
 
+      {/* MOBILE BAR */}
       <div className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white dark:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800 shadow-none p-4"><div className="flex items-center justify-between mb-0 shadow-none"><div onClick={() => setShowMobileCart(!showMobileCart)} className="flex flex-col cursor-pointer shadow-none"><span className="text-[10px] text-neutral-500 dark:text-neutral-500 font-semibold uppercase tracking-wider flex items-center gap-1 shadow-none">{cart.length} Item <ChevronUp className={`h-3 w-3 transition-transform shadow-none ${showMobileCart ? 'rotate-180' : ''}`} /></span><span suppressHydrationWarning className={`text-lg font-bold shadow-none ${textMain}`}>Rp {total.toLocaleString('id-ID')}</span></div><Button onClick={() => setShowMobileCart(true)} className="bg-green-600 dark:bg-green-700 hover:bg-green-700 dark:hover:bg-green-800 text-white font-semibold h-10 px-6 shadow-none">Bayar</Button></div></div>
       
       <Dialog open={showMobileCart} onOpenChange={setShowMobileCart}>
@@ -671,6 +687,8 @@ export default function POS() {
             body { background: white !important; color: black !important; }
             .dark { color-scheme: light !important; }
         }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
     </div>
   )

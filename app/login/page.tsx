@@ -6,10 +6,10 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Lock, Mail, Loader2, Utensils } from 'lucide-react'
+// Mengganti Mail dengan User/Phone untuk UI yang lebih relevan
+import { Lock, User, Loader2, Utensils } from 'lucide-react'
 import { toast, Toaster } from 'sonner'
 
-// --- KONFIGURASI SUPABASE ---
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 const supabase = createClient(supabaseUrl, supabaseKey)
@@ -17,32 +17,33 @@ const supabase = createClient(supabaseUrl, supabaseKey)
 export default function LoginPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
-  const [form, setForm] = useState({ email: '', password: '' })
+  // State identifier menampung username atau nomor hp
+  const [form, setForm] = useState({ identifier: '', password: '' })
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
 
     try {
+      // Menggunakan operator .or() untuk mencari di kolom name ATAU phone
       const { data, error } = await supabase
         .from('users_app')
         .select('*')
-        .eq('email', form.email)
+        .or(`name.eq.${form.identifier},phone.eq.${form.identifier}`)
         .eq('password', form.password)
         .single()
 
       if (error || !data) {
-        throw new Error("Email atau password salah.")
+        throw new Error("Username/Nomor HP atau password salah.")
       }
 
       localStorage.setItem('user_session', JSON.stringify(data))
       toast.success("Login Berhasil!", { description: `Halo, ${data.name}` })
       
-      // --- PERUBAHAN DISINI: Redirect ke /delivery ---
       setTimeout(() => router.push('/delivery'), 1000)
 
     } catch (err: any) {
-      toast.error("Gagal Masuk", { description: "Periksa kembali email & password Anda." })
+      toast.error("Gagal Masuk", { description: err.message })
     } finally {
       setLoading(false)
     }
@@ -65,13 +66,13 @@ export default function LoginPage() {
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-1">
               <div className="relative">
-                <Mail className="absolute left-3 top-2.5 h-4 w-4 text-neutral-400" />
+                <User className="absolute left-3 top-2.5 h-4 w-4 text-neutral-400" />
                 <Input 
-                  type="email" 
-                  placeholder="Email" 
+                  type="text" 
+                  placeholder="Username atau Nomor HP" 
                   className="pl-9 h-10 text-sm bg-neutral-50 dark:bg-neutral-800 border-neutral-200 dark:border-neutral-700"
-                  value={form.email}
-                  onChange={e => setForm({...form, email: e.target.value})}
+                  value={form.identifier}
+                  onChange={e => setForm({...form, identifier: e.target.value})}
                   required
                 />
               </div>
@@ -91,9 +92,10 @@ export default function LoginPage() {
             </div>
 
             <Button 
+            variant="default"
               type="submit" 
               disabled={loading} 
-              className="w-full h-10 bg-neutral-900 hover:bg-neutral-800 text-white font-bold rounded-lg text-sm shadow-md mt-2"
+              className="w-full h-10 "
             >
               {loading ? <Loader2 className="animate-spin h-4 w-4" /> : "Masuk"}
             </Button>

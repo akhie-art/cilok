@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { User, Lock, Mail, Loader2, Utensils } from 'lucide-react'
+import { User, Lock, Phone, Loader2, Utensils } from 'lucide-react' // Mengganti Mail dengan Phone
 import { toast, Toaster } from 'sonner'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
@@ -16,30 +16,31 @@ const supabase = createClient(supabaseUrl, supabaseKey)
 export default function RegisterPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
-  const [form, setForm] = useState({ name: '', email: '', password: '' })
+  // 1. Ganti email menjadi phone di state
+  const [form, setForm] = useState({ name: '', phone: '', password: '' })
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
 
     try {
-      // 1. Cek Email
+      // 2. Cek Nomor HP (Ganti filter email menjadi phone)
       const { data: existingUser } = await supabase
         .from('users_app')
         .select('id')
-        .eq('email', form.email)
+        .eq('phone', form.phone)
         .single()
 
       if (existingUser) {
-        throw new Error("Email ini sudah terdaftar.")
+        throw new Error("Nomor HP ini sudah terdaftar.")
       }
 
-      // 2. Simpan User
+      // 3. Simpan User dengan kolom phone
       const { error } = await supabase
         .from('users_app')
         .insert([{
           name: form.name,
-          email: form.email,
+          phone: form.phone,
           password: form.password
         }])
 
@@ -62,7 +63,6 @@ export default function RegisterPage() {
       <div className="w-full max-w-sm bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl shadow-xl overflow-hidden">
         <div className="p-8">
           <div className="flex flex-col items-center mb-6 text-center">
-            {/* Menggunakan Icon & Style yang sama persis dengan Login */}
             <div className="h-10 w-10 bg-neutral-900 dark:bg-white text-white dark:text-black rounded-lg flex items-center justify-center mb-3 shadow-lg">
               <Utensils className="h-5 w-5" />
             </div>
@@ -72,7 +72,7 @@ export default function RegisterPage() {
 
           <form onSubmit={handleRegister} className="space-y-4">
             
-            {/* Input Nama (Style Login) */}
+            {/* Input Nama */}
             <div className="space-y-1">
               <div className="relative">
                 <User className="absolute left-3 top-2.5 h-4 w-4 text-neutral-400" />
@@ -86,22 +86,22 @@ export default function RegisterPage() {
               </div>
             </div>
 
-            {/* Input Email (Style Login) */}
+            {/* 4. Input Nomor HP (Sebelumnya Email) */}
             <div className="space-y-1">
               <div className="relative">
-                <Mail className="absolute left-3 top-2.5 h-4 w-4 text-neutral-400" />
+                <Phone className="absolute left-3 top-2.5 h-4 w-4 text-neutral-400" />
                 <Input 
-                  type="email"
-                  placeholder="Email" 
+                  type="tel" // Menggunakan type tel untuk nomor telepon
+                  placeholder="Nomor HP" 
                   className="pl-9 h-10 text-sm bg-neutral-50 dark:bg-neutral-800 border-neutral-200 dark:border-neutral-700"
-                  value={form.email}
-                  onChange={e => setForm({...form, email: e.target.value})}
+                  value={form.phone}
+                  onChange={e => setForm({...form, phone: e.target.value})}
                   required
                 />
               </div>
             </div>
 
-            {/* Input Password (Style Login) */}
+            {/* Input Password */}
             <div className="space-y-1">
               <div className="relative">
                 <Lock className="absolute left-3 top-2.5 h-4 w-4 text-neutral-400" />
@@ -117,9 +117,10 @@ export default function RegisterPage() {
             </div>
 
             <Button 
+            variant="default"
               type="submit" 
               disabled={loading} 
-              className="w-full h-10 bg-neutral-900 hover:bg-neutral-800 text-white font-bold rounded-lg text-sm shadow-md mt-2"
+              className="w-full h-10"
             >
               {loading ? <Loader2 className="animate-spin h-4 w-4" /> : "Daftar Sekarang"}
             </Button>
