@@ -20,9 +20,10 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { 
   Moon, Sun, ShoppingCart, Plus, Minus, Search, Loader2, Utensils, 
   List, QrCode, Wallet, CalendarDays, Filter, ChevronDown, 
-  Printer, Download, X, Camera, Upload, 
+  Printer, Download, X, Camera, 
   ChevronUp, CheckCircle2, Bell, Bike, User, MapPin, 
-  Phone, ExternalLink, Ban, Check, Package, Clock, Navigation, Image as ImageIcon
+  Phone, ExternalLink, Ban, Check, Package, Clock, Navigation, Image as ImageIcon,
+  Calculator
 } from 'lucide-react'
 import { toast, Toaster } from 'sonner'
 
@@ -85,6 +86,10 @@ export default function POS() {
   const [search, setSearch] = useState('')
   const [selectedCategory, setSelectedCategory] = useState("Semua")
   
+  // State untuk Input Manual
+  const [manualName, setManualName] = useState('')
+  const [manualPrice, setManualPrice] = useState('')
+
   const [openHistory, setOpenHistory] = useState(false)
   const [openSuccess, setOpenSuccess] = useState(false)
   const [openScanner, setOpenScanner] = useState(false)
@@ -107,12 +112,14 @@ export default function POS() {
 
   const inputBayarRef = useRef<HTMLInputElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const manualPriceRef = useRef<HTMLInputElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0)
   const total = subtotal 
+  // Perhitungan kembalian menggunakan raw number dari state 'bayar'
   const kembalian = metode === 'tunai' ? (bayar ? Number(bayar) - total : 0) : 0
 
   // --- LOGIC FUNCTIONS ---
@@ -266,6 +273,33 @@ export default function POS() {
       if (found) return prev.map(p => p.id === product.id ? { ...p, qty: p.qty + 1 } : p)
       return [...prev, { ...product, qty: 1 }]
     })
+  }
+
+  // --- FUNGSI INPUT MANUAL ---
+  const handleAddManualItem = () => {
+    if (!manualPrice) {
+        toast.error("Harga harus diisi!");
+        manualPriceRef.current?.focus();
+        return;
+    }
+
+    const price = parseFloat(manualPrice);
+    if (isNaN(price) || price <= 0) {
+        toast.error("Harga tidak valid");
+        return;
+    }
+
+    const newItem: Product = {
+        id: Date.now(), // ID unik berdasarkan timestamp
+        name: manualName.trim() || 'Item Manual', // Nama default jika kosong
+        price: price,
+        category: 'Manual'
+    }
+
+    addToCart(newItem);
+    // Reset form manual
+    setManualName('');
+    setManualPrice('');
   }
 
   const updateQty = (id: number, delta: number) => {
@@ -435,9 +469,7 @@ export default function POS() {
   const stats = useMemo(() => {
     const totalOmzet = transactions.reduce((acc, curr) => acc + (curr.total || 0), 0)
     const count = transactions.length
-    // PERBAIKAN: Menghitung Total Item Terjual, bukan rata-rata
     const totalItemSold = transactions.reduce((acc, curr) => {
-      // Pastikan items ada dan berbentuk array
       const items = curr.items || [];
       const qtyInTransaction = items.reduce((iAcc, item) => iAcc + (item.qty || 0), 0);
       return acc + qtyInTransaction;
@@ -445,18 +477,6 @@ export default function POS() {
     
     return { totalOmzet, count, totalItemSold }
   }, [transactions])
-
-  const quickAmounts = useMemo(() => {
-    if (total === 0) return []
-    const amounts = [total]
-    if (total < 10000) amounts.push(10000)
-    if (total < 20000) amounts.push(20000)
-    if (total < 50000) amounts.push(50000)
-    if (total < 100000) amounts.push(100000)
-    const rounded = Math.ceil(total / 5000) * 5000
-    if (!amounts.includes(rounded)) amounts.push(rounded)
-    return [...new Set(amounts)].sort((a, b) => a - b)
-  }, [total])
 
   const MemoizedCheckoutPanel = useMemo(() => {
     return (
@@ -475,11 +495,60 @@ export default function POS() {
                 )}
                 <button onClick={() => setShowMobileCart(false)} className="lg:hidden p-2 -mr-2 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-full"><ChevronDown className="h-5 w-5" /></button>
             </div>
+            
+            {/* AREA INPUT MANUAL (DIPERBARUI) */}
+            <div className="p-3 border-b border-neutral-100 dark:border-neutral-800 bg-neutral-50/30 dark:bg-neutral-900/30 space-y-2">
+                <div className="flex items-center gap-2 text-[10px] font-bold uppercase text-neutral-500 tracking-wider">
+                     <Calculator className="h-3 w-3" /> Input Manual
+                </div>
+                <div className="flex gap-2">
+                    {/* Menggunakan Native Select dengan Styling yang sesuai */}
+                    <div className="relative flex-1">
+                        <select
+                            className="h-9 w-full text-xs bg-white dark:bg-neutral-950 border border-neutral-300 dark:border-neutral-800 rounded-md px-2 focus:ring-0 focus:border-neutral-900 dark:focus:border-neutral-700 transition-colors appearance-none"
+                            value={manualName}
+                            onChange={(e) => {
+                                const selectedName = e.target.value;
+                                setManualName(selectedName);
+                                // Auto-fill harga berdasarkan produk yang dipilih
+                                const product = products.find(p => p.name === selectedName);
+                                if (product) {
+                                    setManualPrice(product.price.toString());
+                                }
+                            }}
+                        >
+                            <option value="">Pilih Menu Manual...</option>
+                            {products.map((p) => (
+                                <option key={p.id} value={p.name}>
+                                    {p.name}
+                                </option>
+                            ))}
+                        </select>
+                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-neutral-400 pointer-events-none" />
+                    </div>
+
+                    <Input
+                        ref={manualPriceRef}
+                        type="number"
+                        placeholder="Harga"
+                        value={manualPrice}
+                        onChange={(e) => setManualPrice(e.target.value)}
+                        className="h-9 text-xs w-24 bg-white dark:bg-neutral-950"
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleAddManualItem()
+                        }}
+                    />
+                    <Button onClick={handleAddManualItem} size="sm" className="h-9 w-9 p-0 bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:opacity-90">
+                        <Plus className="h-4 w-4" />
+                    </Button>
+                </div>
+            </div>
+
             <div className="flex-1 min-h-0 bg-white dark:bg-neutral-900 relative shadow-none">
                 <ScrollArea className="h-full w-full">
                     <div className="px-4 py-4 pb-20 lg:pb-4">
                     {cart.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-48 text-neutral-400 dark:text-neutral-600 text-xs text-center space-y-2 shadow-none">
+                        <div className="flex flex-col items-center justify-center h-32 text-neutral-400 dark:text-neutral-600 text-xs text-center space-y-2 shadow-none">
                         <ShoppingCart className="h-8 w-8 opacity-20 shadow-none" />
                         <p className="shadow-none">Belum ada menu dipilih</p>
                         </div>
@@ -519,21 +588,21 @@ export default function POS() {
                     <button onClick={handleQRISClick} className={`flex items-center justify-center gap-2 h-10 rounded-lg text-xs font-semibold border transition-all shadow-none ${metode === 'qris' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-transparent border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800'}`}><QrCode className="h-3.5 w-3.5 shadow-none" /> QRIS</button>
                 </div>
                 <div className="space-y-3 shadow-none">
+                    {/* INPUT PEMBAYARAN TERFORMAT OTOMATIS */}
                     <Input 
                         ref={inputBayarRef} 
-                        type="number" 
-                        value={bayar} 
-                        onChange={e => setBayar(e.target.value)} 
+                        type="text" 
+                        inputMode="numeric"
+                        value={bayar ? parseInt(bayar).toLocaleString('id-ID') : ''}
+                        onChange={e => {
+                            // Hapus semua karakter selain angka
+                            const val = e.target.value.replace(/\D/g, '')
+                            setBayar(val)
+                        }}
                         className={`h-12 text-xl font-bold text-center shadow-none ${inputBase} ${metode === 'qris' ? 'hidden' : ''}`} 
                         placeholder="Input Pembayaran (F8)" 
                     />
-                    {metode === 'tunai' && cart.length > 0 && (
-                    <div className="grid grid-cols-4 gap-2 shadow-none">
-                        {quickAmounts.map(amt => (
-                        <button key={amt} onClick={() => setBayar(amt.toString())} className="h-9 rounded-md bg-white dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 text-[10px] font-semibold hover:border-neutral-400 dark:hover:border-neutral-500 dark:text-neutral-300 transition-colors shadow-none">{amt === total ? 'Pas' : (amt/1000) + 'k'}</button>
-                        ))}
-                    </div>
-                    )}
+                    
                     <Button onClick={() => handleBayar()} disabled={loading || (metode === 'tunai' && (kembalian < 0 || !bayar)) || cart.length === 0} className="w-full h-12 text-base font-semibold rounded-lg bg-green-600 hover:bg-green-700 text-white border-none shadow-none disabled:bg-neutral-200 dark:disabled:bg-neutral-800">
                     {loading ? <Loader2 className="animate-spin h-5 w-5 shadow-none" /> : <span suppressHydrationWarning className="shadow-none">BAYAR: Rp {total.toLocaleString('id-ID')}</span>}
                     </Button>
@@ -541,7 +610,7 @@ export default function POS() {
             </div>
         </div>
       )
-  }, [cart, bayar, metode, total, loading, subtotal, quickAmounts, kembalian, textMain, textMuted, inputBase, handleBayar, handleQRISClick]);
+  }, [cart, bayar, metode, total, loading, kembalian, textMain, textMuted, inputBase, handleBayar, handleQRISClick, manualName, manualPrice, handleAddManualItem]);
 
   return (
     <div className={`min-h-screen transition-colors duration-300 font-sans tracking-tight bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 pb-24 lg:pb-0 shadow-none`}>
@@ -698,14 +767,12 @@ export default function POS() {
               <div className="grid grid-cols-2 md:grid-cols-4 border-b border-neutral-200 dark:border-neutral-800 shrink-0 bg-neutral-50/30 dark:bg-neutral-950/30 shadow-none">
                  <div className="p-4 sm:p-5 flex flex-col gap-1.5 border-r border-neutral-200 dark:border-neutral-800 shadow-none"><span className="text-[10px] uppercase text-neutral-500 dark:text-neutral-500 font-semibold tracking-widest shadow-none">Total Omzet</span><div suppressHydrationWarning className="flex items-center gap-1.5 text-neutral-900 dark:text-neutral-100 font-semibold text-lg sm:text-2xl italic tracking-tight shadow-none">Rp {stats.totalOmzet.toLocaleString('id-ID')}</div></div>
                  <div className="p-4 sm:p-5 flex flex-col gap-1.5 border-r border-neutral-200 dark:border-neutral-800 shadow-none"><span className="text-[10px] uppercase text-neutral-500 dark:text-neutral-500 font-semibold tracking-widest shadow-none">Transaksi</span><div className="flex items-center gap-2 text-neutral-900 dark:text-neutral-100 font-semibold text-lg sm:text-2xl italic tracking-tight shadow-none">{stats.count} <span className="text-[10px] not-italic font-semibold text-neutral-400 shadow-none">Order</span></div></div>
-                 {/* PERBAIKAN: Card Rata-Rata diubah menjadi Total Item Terjual */}
                  <div className="p-4 sm:p-5 flex flex-col gap-1.5 border-r border-neutral-200 dark:border-neutral-800 shadow-none"><span className="text-[10px] uppercase text-neutral-500 dark:text-neutral-500 font-semibold tracking-widest shadow-none">Total Item Terjual</span><div suppressHydrationWarning className="flex items-center gap-1.5 text-neutral-900 dark:text-neutral-100 font-semibold text-lg sm:text-2xl italic tracking-tight shadow-none">{stats.totalItemSold.toLocaleString('id-ID')} <span className="text-sm not-italic font-normal text-neutral-500">Pcs</span></div></div>
                  <div className="p-4 sm:p-5 flex flex-col justify-center bg-white dark:bg-neutral-900 shadow-none"><div className="relative w-full shadow-none"><Filter className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400 z-10 shadow-none" /><select value={filter} onChange={(e) => setFilter(e.target.value)} className="w-full h-10 pl-10 pr-8 text-xs font-semibold rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 hover:bg-neutral-50 dark:hover:bg-neutral-800 focus:outline-none dark:text-neutral-200 appearance-none cursor-pointer transition-all shadow-none"><option value="hari">Hari Ini</option><option value="minggu">Minggu Ini</option><option value="bulan">Bulan Ini</option><option value="tahun">Tahun Ini</option><option value="semua">Semua</option></select><ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400 pointer-events-none shadow-none" /></div></div>
               </div>
               <div className="flex-1 min-h-0 bg-neutral-50/50 dark:bg-neutral-950 overflow-hidden relative shadow-none"><ScrollArea className="h-full w-full shadow-none"><div className="w-full overflow-x-auto shadow-none"><table className="w-full text-left border-collapse min-w-200 shadow-none">
                 <thead className="sticky top-0 bg-white dark:bg-neutral-900 z-10 text-[10px] uppercase tracking-widest text-neutral-400 dark:text-neutral-500 font-semibold border-b border-neutral-200 dark:border-neutral-800 shadow-none">
                     <tr>
-                        {/* PERBAIKAN: Menambahkan kolom No */}
                         <th className="px-6 py-4 w-[50px] shadow-none">No</th>
                         <th className="px-6 py-4 shadow-none">Status & Waktu</th>
                         <th className="px-6 py-4 shadow-none">Item</th>
@@ -716,7 +783,6 @@ export default function POS() {
                 </thead>
                 <tbody className="divide-y divide-neutral-100 dark:divide-neutral-900 bg-white dark:bg-neutral-900 shadow-none">{transactions.length === 0 ? (<tr><td colSpan={6} className="py-32 text-center shadow-none"><div className="flex flex-col items-center gap-3 text-neutral-400 dark:text-neutral-600 shadow-none"><Package className="h-10 w-10 opacity-20 shadow-none" /><p className="text-sm font-medium italic shadow-none">Tidak ada transaksi.</p></div></td></tr>) : (transactions.map((t, index) => (
                     <tr key={t.id} className="hover:bg-neutral-50/80 dark:hover:bg-neutral-800/30 transition-all group shadow-none">
-                        {/* PERBAIKAN: Mengisi kolom No */}
                         <td className="px-6 py-5 text-neutral-500 text-xs font-mono shadow-none">{index + 1}</td>
                         <td className="px-6 py-5 whitespace-nowrap shadow-none"><div className="flex items-center gap-4 shadow-none"><div className="bg-neutral-100 dark:bg-neutral-800 p-2 rounded-lg shadow-none"><Clock className="h-4 w-4 text-neutral-500 shadow-none"/></div><div className="flex flex-col shadow-none"><span suppressHydrationWarning className={`text-sm font-semibold shadow-none ${textMain}`}>{new Date(t.created_at).toLocaleDateString('id-ID', {day: 'numeric', month: 'short'})}</span><span suppressHydrationWarning className={`text-[10px] font-mono tracking-tighter uppercase shadow-none ${textMuted}`}>{new Date(t.created_at).toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})} WIB</span></div></div></td><td className="px-6 py-5 shadow-none"><div className="flex flex-wrap gap-1.5 max-w-75 shadow-none">{t.items?.map((item, idx) => (<span key={idx} className={`px-2 py-0.5 bg-neutral-100 dark:bg-neutral-800 text-[10px] font-semibold rounded-md shadow-none ${textMain}`}>{item.qty}x {item.name}</span>))}</div></td><td className="px-6 py-5 text-center whitespace-nowrap shadow-none"><div className="flex flex-col items-center gap-1.5 shadow-none"><span className={`px-2.5 py-1 rounded-lg text-[9px] font-semibold uppercase tracking-widest border shadow-none ${t.metode_pembayaran === 'qris' ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' : 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400'}`}>{t.metode_pembayaran}</span></div></td><td className="px-6 py-5 text-center whitespace-nowrap shadow-none">{t.gambar ? (<a href={t.gambar} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center p-2 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors shadow-none"><Camera className="h-4 w-4 text-neutral-600 dark:text-neutral-400 shadow-none" /></a>) : (<span className="text-[10px] font-semibold text-neutral-300 dark:text-neutral-700 uppercase shadow-none">No File</span>)}</td><td className="px-6 py-5 text-right whitespace-nowrap shadow-none"><div suppressHydrationWarning className={`text-base font-semibold italic tracking-tight shadow-none ${textMain}`}>Rp {t.total.toLocaleString('id-ID')}</div></td></tr>)))}</tbody></table></div><ScrollBar orientation="horizontal" className="shadow-none" /></ScrollArea></div>
             </DialogContent>
