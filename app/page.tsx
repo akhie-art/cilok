@@ -22,7 +22,7 @@ import {
   List, QrCode, Wallet, CalendarDays, Filter, ChevronDown, 
   Printer, Download, X, Camera, Upload, 
   ChevronUp, CheckCircle2, Bell, Bike, User, MapPin, 
-  Phone, ExternalLink, Ban, Check, Package, Clock, Navigation
+  Phone, ExternalLink, Ban, Check, Package, Clock, Navigation, Image as ImageIcon
 } from 'lucide-react'
 import { toast, Toaster } from 'sonner'
 
@@ -109,10 +109,13 @@ export default function POS() {
   const searchInputRef = useRef<HTMLInputElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0)
   const total = subtotal 
   const kembalian = metode === 'tunai' ? (bayar ? Number(bayar) - total : 0) : 0
+
+  // --- LOGIC FUNCTIONS ---
 
   const startTracking = useCallback((orderId: number) => {
     if (!navigator.geolocation) return
@@ -252,18 +255,6 @@ export default function POS() {
     }
   }
 
-  const toggleSelectOrder = (id: number) => {
-    setSelectedOrderIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id])
-  }
-
-  const toggleSelectAll = () => {
-    if (selectedOrderIds.length === orders.length && orders.length > 0) {
-        setSelectedOrderIds([])
-    } else {
-        setSelectedOrderIds(orders.map(o => o.id))
-    }
-  }
-
   const addToCart = (product: Product) => {
     setCart(prev => {
       const found = prev.find(p => p.id === product.id)
@@ -292,6 +283,8 @@ export default function POS() {
     toast.info("Item dihapus dari keranjang", { duration: 1500 })
   }
 
+  // --- CAMERA & UPLOAD LOGIC ---
+
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
@@ -301,7 +294,7 @@ export default function POS() {
       }
       setCameraError('')
     } catch {
-      setCameraError("Gagal akses kamera.")
+      setCameraError("Gagal akses kamera. Pastikan izin diberikan.")
     }
   }
 
@@ -319,6 +312,14 @@ export default function POS() {
     setOpenScanner(true) 
   }
 
+  const uploadToSupabase = async (blob: Blob) => {
+    const fileName = `qris_${Date.now()}.jpg`;
+    const { error: uploadError } = await supabase.storage.from('buktiQris').upload(fileName, blob, { contentType: 'image/jpeg' });
+    if (uploadError) throw uploadError;
+    const { data: { publicUrl } } = supabase.storage.from('buktiQris').getPublicUrl(fileName);
+    return publicUrl;
+  }
+
   const handleCaptureAndPay = async () => {
     if (!videoRef.current) return;
     setUploading(true);
@@ -331,16 +332,29 @@ export default function POS() {
       ctx.drawImage(videoRef.current, 0, 0);
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.8));
       if (!blob) throw new Error("Gagal membuat gambar");
-      const fileName = `qris_${Date.now()}.jpg`;
-      const { error: uploadError } = await supabase.storage.from('buktiQris').upload(fileName, blob, { contentType: 'image/jpeg' });
-      if (uploadError) throw uploadError;
-      const { data: { publicUrl } } = supabase.storage.from('buktiQris').getPublicUrl(fileName);
+      
+      const publicUrl = await uploadToSupabase(blob);
       await handleBayar(publicUrl);
       setOpenScanner(false);
-    } catch {
-      toast.error("Gagal Upload");
+    } catch (err) {
+      toast.error("Gagal Upload Kamera");
     } finally {
       setUploading(false);
+    }
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+        const publicUrl = await uploadToSupabase(file);
+        await handleBayar(publicUrl);
+        setOpenScanner(false);
+    } catch (err) {
+        toast.error("Gagal Upload Galeri");
+    } finally {
+        setUploading(false);
     }
   }
 
@@ -348,6 +362,7 @@ export default function POS() {
     if (metode === 'tunai' && kembalian < 0) return toast.error("Pembayaran Kurang!")
     if (cart.length === 0) return
     if (!imageUrl) setLoading(true)
+    
     const transactionPayload = { 
       total: Number(total), 
       subtotal: Number(subtotal), 
@@ -375,6 +390,8 @@ export default function POS() {
     }
   }
 
+  // --- OTHERS ---
+
   const handleExportCSV = () => {
     if (transactions.length === 0) return
     const headers = ["ID", "Waktu", "Total", "Metode", "Bukti", "Items"]
@@ -383,8 +400,6 @@ export default function POS() {
     const encodedUri = encodeURI(csvContent)
     const link = document.createElement("a"); link.setAttribute("href", encodedUri); link.setAttribute("download", "Laporan.csv"); link.click()
   }
-
-  const handlePrint = () => { window.print() }
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -420,8 +435,15 @@ export default function POS() {
   const stats = useMemo(() => {
     const totalOmzet = transactions.reduce((acc, curr) => acc + (curr.total || 0), 0)
     const count = transactions.length
-    const avg = count > 0 ? totalOmzet / count : 0
-    return { totalOmzet, count, avg }
+    // PERBAIKAN: Menghitung Total Item Terjual, bukan rata-rata
+    const totalItemSold = transactions.reduce((acc, curr) => {
+      // Pastikan items ada dan berbentuk array
+      const items = curr.items || [];
+      const qtyInTransaction = items.reduce((iAcc, item) => iAcc + (item.qty || 0), 0);
+      return acc + qtyInTransaction;
+    }, 0);
+    
+    return { totalOmzet, count, totalItemSold }
   }, [transactions])
 
   const quickAmounts = useMemo(() => {
@@ -519,7 +541,7 @@ export default function POS() {
             </div>
         </div>
       )
-  }, [cart, bayar, metode, total, loading, subtotal, quickAmounts, kembalian, textMain, textMuted, inputBase]);
+  }, [cart, bayar, metode, total, loading, subtotal, quickAmounts, kembalian, textMain, textMuted, inputBase, handleBayar, handleQRISClick]);
 
   return (
     <div className={`min-h-screen transition-colors duration-300 font-sans tracking-tight bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 pb-24 lg:pb-0 shadow-none`}>
@@ -535,6 +557,7 @@ export default function POS() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* DIALOG PESANAN DELIVERY */}
           <Dialog open={openOrders} onOpenChange={(open) => { if(!open) setOpenOrders(false); setNotificationCount(0); setSelectedOrderIds([]); }}>
              <div className="relative" onClick={() => { setOpenOrders(true); setNotificationCount(0); }}>
                 <Button variant="ghost" size="sm" className={`h-10 px-3 gap-2 rounded-xl text-sm font-medium hover:bg-neutral-100 dark:hover:bg-neutral-900 ${orders.length > 0 ? 'text-green-600 dark:text-green-400' : 'text-neutral-900 dark:text-neutral-300'}`}>
@@ -571,7 +594,10 @@ export default function POS() {
                  </DialogHeader>
                  {/* BAGIAN PILIH SEMUA */}
                  <div className="px-6 py-2 border-b bg-neutral-50 dark:bg-neutral-800/50 flex items-center gap-4">
-                    <div className="flex items-center gap-2 cursor-pointer select-none" onClick={toggleSelectAll}>
+                    <div className="flex items-center gap-2 cursor-pointer select-none" onClick={() => {
+                        if (selectedOrderIds.length === orders.length && orders.length > 0) setSelectedOrderIds([]);
+                        else setSelectedOrderIds(orders.map(o => o.id));
+                    }}>
                         <Checkbox checked={selectedOrderIds.length === orders.length && orders.length > 0} />
                         <span className="text-[11px] font-bold uppercase opacity-60">Pilih Semua</span>
                     </div>
@@ -585,7 +611,9 @@ export default function POS() {
                                         <div className="flex items-center gap-3 shadow-none">
                                             <Checkbox 
                                                 checked={selectedOrderIds.includes(order.id)}
-                                                onCheckedChange={() => toggleSelectOrder(order.id)}
+                                                onCheckedChange={() => {
+                                                    setSelectedOrderIds(prev => prev.includes(order.id) ? prev.filter(i => i !== order.id) : [...prev, order.id])
+                                                }}
                                                 className="border-neutral-300 dark:border-neutral-700"
                                             />
                                             <span className={`text-[9px] font-bold px-2.5 py-1 rounded-full uppercase tracking-widest shadow-none ${
@@ -641,6 +669,7 @@ export default function POS() {
              </DialogContent>
           </Dialog>
 
+          {/* DIALOG RIWAYAT */}
           <Dialog open={openHistory} onOpenChange={setOpenHistory}>
             <div onClick={() => setOpenHistory(true)}>
               <Button variant="ghost" size="sm" className="h-10 rounded-xl px-3 gap-2 text-sm font-medium hover:bg-neutral-100 dark:hover:bg-neutral-900 dark:text-neutral-300 shadow-none">
@@ -669,10 +698,27 @@ export default function POS() {
               <div className="grid grid-cols-2 md:grid-cols-4 border-b border-neutral-200 dark:border-neutral-800 shrink-0 bg-neutral-50/30 dark:bg-neutral-950/30 shadow-none">
                  <div className="p-4 sm:p-5 flex flex-col gap-1.5 border-r border-neutral-200 dark:border-neutral-800 shadow-none"><span className="text-[10px] uppercase text-neutral-500 dark:text-neutral-500 font-semibold tracking-widest shadow-none">Total Omzet</span><div suppressHydrationWarning className="flex items-center gap-1.5 text-neutral-900 dark:text-neutral-100 font-semibold text-lg sm:text-2xl italic tracking-tight shadow-none">Rp {stats.totalOmzet.toLocaleString('id-ID')}</div></div>
                  <div className="p-4 sm:p-5 flex flex-col gap-1.5 border-r border-neutral-200 dark:border-neutral-800 shadow-none"><span className="text-[10px] uppercase text-neutral-500 dark:text-neutral-500 font-semibold tracking-widest shadow-none">Transaksi</span><div className="flex items-center gap-2 text-neutral-900 dark:text-neutral-100 font-semibold text-lg sm:text-2xl italic tracking-tight shadow-none">{stats.count} <span className="text-[10px] not-italic font-semibold text-neutral-400 shadow-none">Order</span></div></div>
-                 <div className="p-4 sm:p-5 flex flex-col gap-1.5 border-r border-neutral-200 dark:border-neutral-800 shadow-none"><span className="text-[10px] uppercase text-neutral-500 dark:text-neutral-500 font-semibold tracking-widest shadow-none">Rata-Rata</span><div suppressHydrationWarning className="flex items-center gap-1.5 text-neutral-900 dark:text-neutral-100 font-semibold text-lg sm:text-2xl italic tracking-tight shadow-none">Rp {Math.round(stats.avg).toLocaleString('id-ID')}</div></div>
+                 {/* PERBAIKAN: Card Rata-Rata diubah menjadi Total Item Terjual */}
+                 <div className="p-4 sm:p-5 flex flex-col gap-1.5 border-r border-neutral-200 dark:border-neutral-800 shadow-none"><span className="text-[10px] uppercase text-neutral-500 dark:text-neutral-500 font-semibold tracking-widest shadow-none">Total Item Terjual</span><div suppressHydrationWarning className="flex items-center gap-1.5 text-neutral-900 dark:text-neutral-100 font-semibold text-lg sm:text-2xl italic tracking-tight shadow-none">{stats.totalItemSold.toLocaleString('id-ID')} <span className="text-sm not-italic font-normal text-neutral-500">Pcs</span></div></div>
                  <div className="p-4 sm:p-5 flex flex-col justify-center bg-white dark:bg-neutral-900 shadow-none"><div className="relative w-full shadow-none"><Filter className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400 z-10 shadow-none" /><select value={filter} onChange={(e) => setFilter(e.target.value)} className="w-full h-10 pl-10 pr-8 text-xs font-semibold rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 hover:bg-neutral-50 dark:hover:bg-neutral-800 focus:outline-none dark:text-neutral-200 appearance-none cursor-pointer transition-all shadow-none"><option value="hari">Hari Ini</option><option value="minggu">Minggu Ini</option><option value="bulan">Bulan Ini</option><option value="tahun">Tahun Ini</option><option value="semua">Semua</option></select><ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400 pointer-events-none shadow-none" /></div></div>
               </div>
-              <div className="flex-1 min-h-0 bg-neutral-50/50 dark:bg-neutral-950 overflow-hidden relative shadow-none"><ScrollArea className="h-full w-full shadow-none"><div className="w-full overflow-x-auto shadow-none"><table className="w-full text-left border-collapse min-w-200 shadow-none"><thead className="sticky top-0 bg-white dark:bg-neutral-900 z-10 text-[10px] uppercase tracking-widest text-neutral-400 dark:text-neutral-500 font-semibold border-b border-neutral-200 dark:border-neutral-800 shadow-none"><tr><th className="px-6 py-4 shadow-none">Status & Waktu</th><th className="px-6 py-4 shadow-none">Item</th><th className="px-6 py-4 text-center shadow-none">Metode</th><th className="px-6 py-4 text-center shadow-none">Bukti</th><th className="px-6 py-4 text-right shadow-none">Total</th></tr></thead><tbody className="divide-y divide-neutral-100 dark:divide-neutral-900 bg-white dark:bg-neutral-900 shadow-none">{transactions.length === 0 ? (<tr><td colSpan={5} className="py-32 text-center shadow-none"><div className="flex flex-col items-center gap-3 text-neutral-400 dark:text-neutral-600 shadow-none"><Package className="h-10 w-10 opacity-20 shadow-none" /><p className="text-sm font-medium italic shadow-none">Tidak ada transaksi.</p></div></td></tr>) : (transactions.map((t) => (<tr key={t.id} className="hover:bg-neutral-50/80 dark:hover:bg-neutral-800/30 transition-all group shadow-none"><td className="px-6 py-5 whitespace-nowrap shadow-none"><div className="flex items-center gap-4 shadow-none"><div className="bg-neutral-100 dark:bg-neutral-800 p-2 rounded-lg shadow-none"><Clock className="h-4 w-4 text-neutral-500 shadow-none"/></div><div className="flex flex-col shadow-none"><span suppressHydrationWarning className={`text-sm font-semibold shadow-none ${textMain}`}>{new Date(t.created_at).toLocaleDateString('id-ID', {day: 'numeric', month: 'short'})}</span><span suppressHydrationWarning className={`text-[10px] font-mono tracking-tighter uppercase shadow-none ${textMuted}`}>{new Date(t.created_at).toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})} WIB</span></div></div></td><td className="px-6 py-5 shadow-none"><div className="flex flex-wrap gap-1.5 max-w-75 shadow-none">{t.items?.map((item, idx) => (<span key={idx} className={`px-2 py-0.5 bg-neutral-100 dark:bg-neutral-800 text-[10px] font-semibold rounded-md shadow-none ${textMain}`}>{item.qty}x {item.name}</span>))}</div></td><td className="px-6 py-5 text-center whitespace-nowrap shadow-none"><div className="flex flex-col items-center gap-1.5 shadow-none"><span className={`px-2.5 py-1 rounded-lg text-[9px] font-semibold uppercase tracking-widest border shadow-none ${t.metode_pembayaran === 'qris' ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' : 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400'}`}>{t.metode_pembayaran}</span></div></td><td className="px-6 py-5 text-center whitespace-nowrap shadow-none">{t.gambar ? (<a href={t.gambar} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center p-2 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors shadow-none"><Camera className="h-4 w-4 text-neutral-600 dark:text-neutral-400 shadow-none" /></a>) : (<span className="text-[10px] font-semibold text-neutral-300 dark:text-neutral-700 uppercase shadow-none">No File</span>)}</td><td className="px-6 py-5 text-right whitespace-nowrap shadow-none"><div suppressHydrationWarning className={`text-base font-semibold italic tracking-tight shadow-none ${textMain}`}>Rp {t.total.toLocaleString('id-ID')}</div></td></tr>)))}</tbody></table></div><ScrollBar orientation="horizontal" className="shadow-none" /></ScrollArea></div>
+              <div className="flex-1 min-h-0 bg-neutral-50/50 dark:bg-neutral-950 overflow-hidden relative shadow-none"><ScrollArea className="h-full w-full shadow-none"><div className="w-full overflow-x-auto shadow-none"><table className="w-full text-left border-collapse min-w-200 shadow-none">
+                <thead className="sticky top-0 bg-white dark:bg-neutral-900 z-10 text-[10px] uppercase tracking-widest text-neutral-400 dark:text-neutral-500 font-semibold border-b border-neutral-200 dark:border-neutral-800 shadow-none">
+                    <tr>
+                        {/* PERBAIKAN: Menambahkan kolom No */}
+                        <th className="px-6 py-4 w-[50px] shadow-none">No</th>
+                        <th className="px-6 py-4 shadow-none">Status & Waktu</th>
+                        <th className="px-6 py-4 shadow-none">Item</th>
+                        <th className="px-6 py-4 text-center shadow-none">Metode</th>
+                        <th className="px-6 py-4 text-center shadow-none">Bukti</th>
+                        <th className="px-6 py-4 text-right shadow-none">Total</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100 dark:divide-neutral-900 bg-white dark:bg-neutral-900 shadow-none">{transactions.length === 0 ? (<tr><td colSpan={6} className="py-32 text-center shadow-none"><div className="flex flex-col items-center gap-3 text-neutral-400 dark:text-neutral-600 shadow-none"><Package className="h-10 w-10 opacity-20 shadow-none" /><p className="text-sm font-medium italic shadow-none">Tidak ada transaksi.</p></div></td></tr>) : (transactions.map((t, index) => (
+                    <tr key={t.id} className="hover:bg-neutral-50/80 dark:hover:bg-neutral-800/30 transition-all group shadow-none">
+                        {/* PERBAIKAN: Mengisi kolom No */}
+                        <td className="px-6 py-5 text-neutral-500 text-xs font-mono shadow-none">{index + 1}</td>
+                        <td className="px-6 py-5 whitespace-nowrap shadow-none"><div className="flex items-center gap-4 shadow-none"><div className="bg-neutral-100 dark:bg-neutral-800 p-2 rounded-lg shadow-none"><Clock className="h-4 w-4 text-neutral-500 shadow-none"/></div><div className="flex flex-col shadow-none"><span suppressHydrationWarning className={`text-sm font-semibold shadow-none ${textMain}`}>{new Date(t.created_at).toLocaleDateString('id-ID', {day: 'numeric', month: 'short'})}</span><span suppressHydrationWarning className={`text-[10px] font-mono tracking-tighter uppercase shadow-none ${textMuted}`}>{new Date(t.created_at).toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})} WIB</span></div></div></td><td className="px-6 py-5 shadow-none"><div className="flex flex-wrap gap-1.5 max-w-75 shadow-none">{t.items?.map((item, idx) => (<span key={idx} className={`px-2 py-0.5 bg-neutral-100 dark:bg-neutral-800 text-[10px] font-semibold rounded-md shadow-none ${textMain}`}>{item.qty}x {item.name}</span>))}</div></td><td className="px-6 py-5 text-center whitespace-nowrap shadow-none"><div className="flex flex-col items-center gap-1.5 shadow-none"><span className={`px-2.5 py-1 rounded-lg text-[9px] font-semibold uppercase tracking-widest border shadow-none ${t.metode_pembayaran === 'qris' ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' : 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400'}`}>{t.metode_pembayaran}</span></div></td><td className="px-6 py-5 text-center whitespace-nowrap shadow-none">{t.gambar ? (<a href={t.gambar} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center p-2 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors shadow-none"><Camera className="h-4 w-4 text-neutral-600 dark:text-neutral-400 shadow-none" /></a>) : (<span className="text-[10px] font-semibold text-neutral-300 dark:text-neutral-700 uppercase shadow-none">No File</span>)}</td><td className="px-6 py-5 text-right whitespace-nowrap shadow-none"><div suppressHydrationWarning className={`text-base font-semibold italic tracking-tight shadow-none ${textMain}`}>Rp {t.total.toLocaleString('id-ID')}</div></td></tr>)))}</tbody></table></div><ScrollBar orientation="horizontal" className="shadow-none" /></ScrollArea></div>
             </DialogContent>
           </Dialog>
           <Button variant="ghost" size="icon" onClick={() => setDark(!dark)} className="h-10 w-10 rounded-full hover:bg-neutral-200 dark:hover:bg-neutral-800 dark:text-neutral-300 shadow-none">{dark ? <Sun className="h-5 w-5 shadow-none" /> : <Moon className="h-5 w-5 shadow-none" />}</Button>
@@ -681,10 +727,12 @@ export default function POS() {
 
       <main className="container mx-auto p-4 lg:p-6 max-w-7xl print:hidden shadow-none">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start shadow-none">
+          {/* MENU LIST */}
           <div className="lg:col-span-7 space-y-4 shadow-none">
             <div style={glassEffect} className={`space-y-4 bg-white/80 dark:bg-neutral-900/80 p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 sticky top-20 z-30 shadow-none`}><div className="flex gap-2 shadow-none"><div className="relative flex-1 shadow-none"><Search className={`absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 shadow-none ${textMuted}`} /><Input ref={searchInputRef} placeholder="Cari menu (F2)..." className={`h-11 pl-10 text-sm shadow-none ${inputBase}`} value={search} onChange={(e) => setSearch(e.target.value)} /></div></div><div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar shadow-none">{categories.map(cat => (<button key={cat} onClick={() => setSelectedCategory(cat)} className={`px-4 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition-all border shadow-none ${selectedCategory === cat ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 border-transparent shadow-none' : 'bg-transparent text-neutral-500 dark:text-neutral-400 border-transparent hover:bg-neutral-100 dark:hover:bg-neutral-800'}`}>{cat}</button>))}</div></div>
             <ScrollArea className="h-[75vh] lg:h-[calc(100vh-240px)] pr-2 shadow-none"><div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 pb-24 shadow-none">{products.filter(p => (selectedCategory === "Semua" || p.category === selectedCategory)).filter(p => p.name.toLowerCase().includes(search.toLowerCase())).map(p => (<div key={p.id} onClick={() => addToCart(p)} className={`group cursor-pointer ${cardBase} rounded-xl p-4 flex flex-col justify-between h-32 hover:border-neutral-400 dark:hover:border-neutral-600 relative overflow-hidden active:scale-[0.98] shadow-none`}><div className="absolute top-0 right-0 p-3 opacity-0 group-hover:opacity-100 transition-opacity shadow-none"><div className="bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 p-1 rounded-full shadow-none"><Plus className="h-3 w-3 shadow-none"/></div></div><div className="shadow-none"><span className="text-[10px] uppercase font-semibold tracking-wider text-neutral-400 dark:text-neutral-500 mb-1 block shadow-none">{p.category}</span><h3 className={`text-sm font-semibold leading-tight shadow-none ${textMain}`}>{p.name}</h3></div><p suppressHydrationWarning className={`text-base font-semibold shadow-none ${textMain}`}>Rp {p.price.toLocaleString('id-ID')}</p></div>))}</div></ScrollArea>
           </div>
+          {/* CHECKOUT PANEL DESKTOP */}
           <div className="hidden lg:block lg:col-span-5 relative shadow-none"><div className={`bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl flex flex-col h-[calc(100vh-100px)] sticky top-20 overflow-hidden shadow-none`}>{MemoizedCheckoutPanel}</div></div>
         </div>
       </main>
@@ -692,6 +740,7 @@ export default function POS() {
       {/* MOBILE BAR */}
       <div className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white dark:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800 shadow-none p-4"><div className="flex items-center justify-between mb-0 shadow-none"><div onClick={() => setShowMobileCart(!showMobileCart)} className="flex flex-col cursor-pointer shadow-none"><span className="text-[10px] text-neutral-500 dark:text-neutral-500 font-semibold uppercase tracking-wider flex items-center gap-1 shadow-none">{cart.length} Item <ChevronUp className={`h-3 w-3 transition-transform shadow-none ${showMobileCart ? 'rotate-180' : ''}`} /></span><span suppressHydrationWarning className={`text-lg font-bold shadow-none ${textMain}`}>Rp {total.toLocaleString('id-ID')}</span></div><Button onClick={() => setShowMobileCart(true)} className="bg-green-600 dark:bg-green-700 hover:bg-green-700 dark:hover:bg-green-800 text-white font-semibold h-10 px-6 shadow-none">Bayar</Button></div></div>
       
+      {/* DIALOG KERANJANG MOBILE */}
       <Dialog open={showMobileCart} onOpenChange={setShowMobileCart}>
          <DialogContent className="lg:hidden fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[90vw] border-none bg-white dark:bg-neutral-900 p-0 shadow-none rounded-2xl h-[85vh] overflow-hidden">
             <DialogHeader className="sr-only"><DialogTitle>Keranjang Belanja</DialogTitle></DialogHeader>
@@ -699,17 +748,72 @@ export default function POS() {
          </DialogContent>
       </Dialog>
 
+      {/* DIALOG SCANNER / UPLOAD QRIS */}
       <Dialog open={openScanner} onOpenChange={setOpenScanner}>
         <DialogContent className="sm:max-w-md p-0 bg-black text-white border-neutral-800 overflow-hidden shadow-none fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[90vw] rounded-2xl">
-           <DialogHeader className="sr-only"><DialogTitle>Pindai QRIS</DialogTitle></DialogHeader>
-           <div className="relative h-100 flex flex-col bg-black shadow-none"><div className="absolute top-0 w-full p-4 flex justify-between items-center z-10 bg-linear-to-b from-black/80 to-transparent shadow-none"><div className="flex items-center gap-2 shadow-none"><Camera className="h-5 w-5 text-white shadow-none" /><span className="font-semibold text-sm shadow-none">Scan QRIS</span></div><button onClick={() => setOpenScanner(false)} className="bg-white/10 p-1.5 rounded-full hover:bg-white/20 shadow-none"><X className="h-4 w-4 shadow-none" /></button></div><div className="flex-1 relative flex items-center justify-center overflow-hidden shadow-none">{cameraError ? (<div className="text-center p-6 text-red-400 text-sm shadow-none"><p className="shadow-none">{cameraError}</p><Button onClick={startCamera} size="sm" variant="outline" className="mt-4 border-red-500/50 text-red-400 shadow-none">Coba Lagi</Button></div>) : (<video ref={videoRef} autoPlay playsInline className="absolute inset-0 w-full h-full object-cover shadow-none" />)}</div><div className="p-4 bg-neutral-900 shrink-0 flex flex-col gap-2 shadow-none"><Button onClick={handleCaptureAndPay} disabled={uploading || !!cameraError} className="w-full font-bold bg-green-600 hover:bg-green-700 text-white h-12 shadow-none">{uploading ? <Loader2 className="animate-spin h-5 w-5 mr-2 shadow-none" /> : <Upload className="h-5 w-5 mr-2 shadow-none" />}AMBIL FOTO & BAYAR</Button></div></div>
+           <DialogHeader className="sr-only"><DialogTitle>Pindai / Upload QRIS</DialogTitle></DialogHeader>
+           <div className="relative h-[450px] flex flex-col bg-black shadow-none">
+                <div className="absolute top-0 w-full p-4 flex justify-between items-center z-10 bg-gradient-to-b from-black/80 to-transparent shadow-none">
+                    <div className="flex items-center gap-2 shadow-none"><Camera className="h-5 w-5 text-white shadow-none" /><span className="font-semibold text-sm shadow-none">Verifikasi Pembayaran QRIS</span></div>
+                    <button onClick={() => setOpenScanner(false)} className="bg-white/10 p-1.5 rounded-full hover:bg-white/20 shadow-none"><X className="h-4 w-4 shadow-none" /></button>
+                </div>
+
+                <div className="flex-1 relative flex items-center justify-center overflow-hidden shadow-none">
+                    {cameraError ? (
+                        <div className="text-center p-6 text-red-400 text-sm shadow-none">
+                            <p className="shadow-none">{cameraError}</p>
+                            <Button onClick={startCamera} size="sm" variant="outline" className="mt-4 border-red-500/50 text-red-400 shadow-none">Coba Kamera Lagi</Button>
+                        </div>
+                    ) : (
+                        <video ref={videoRef} autoPlay playsInline className="absolute inset-0 w-full h-full object-cover shadow-none" />
+                    )}
+                    {uploading && (
+                        <div className="absolute inset-0 bg-black/60 z-20 flex flex-col items-center justify-center gap-3">
+                            <Loader2 className="h-10 w-10 animate-spin text-green-500" />
+                            <p className="text-sm font-bold">Memproses Transaksi...</p>
+                        </div>
+                    )}
+                </div>
+
+                <div className="p-4 bg-neutral-900 shrink-0 flex flex-col gap-3 shadow-none">
+                    <div className="grid grid-cols-2 gap-3">
+                        {/* INPUT FILE HIDDEN */}
+                        <input 
+                            type="file" 
+                            accept="image/*" 
+                            ref={fileInputRef} 
+                            onChange={handleFileChange} 
+                            className="hidden" 
+                        />
+                        
+                        <Button 
+                            onClick={() => fileInputRef.current?.click()} 
+                            variant="outline" 
+                            disabled={uploading}
+                            className="w-full border-neutral-700 bg-transparent text-white hover:bg-neutral-800 h-12 shadow-none"
+                        >
+                            <ImageIcon className="h-5 w-5 mr-2" /> GALERI
+                        </Button>
+
+                        <Button 
+                            onClick={handleCaptureAndPay} 
+                            disabled={uploading || !!cameraError} 
+                            className="w-full font-bold bg-green-600 hover:bg-green-700 text-white h-12 shadow-none"
+                        >
+                            <Camera className="h-5 w-5 mr-2" /> AMBIL FOTO
+                        </Button>
+                    </div>
+                </div>
+           </div>
         </DialogContent>
       </Dialog>
 
+      {/* DIALOG SUCCESS */}
       <Dialog open={openSuccess} onOpenChange={setOpenSuccess}>
         <DialogContent className="sm:max-w-100 p-0 overflow-hidden border-none shadow-none bg-transparent print:hidden focus:outline-none fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[90vw]">
           <DialogHeader className="sr-only"><DialogTitle>Transaksi Berhasil</DialogTitle></DialogHeader>
-          <div className="flex flex-col h-[85vh] w-full bg-white dark:bg-neutral-900 rounded-2xl overflow-hidden border border-neutral-200 dark:border-neutral-800 shadow-none"><div className="bg-green-600 dark:bg-green-700 p-6 text-center text-white shrink-0 relative z-10 shadow-none"><div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3 backdrop-blur-sm shadow-none"><Utensils className="h-6 w-6 shadow-none" /></div><h3 className="text-xl font-bold shadow-none">Berhasil!</h3><p suppressHydrationWarning className="text-green-100 dark:text-green-200 text-xs mt-1 font-mono shadow-none">{lastTransaction && new Date(lastTransaction.created_at).toLocaleString('id-ID')}</p></div><div className="flex-1 overflow-y-auto bg-neutral-50 dark:bg-neutral-950 p-6 w-full shadow-none"><div className="space-y-6 shadow-none">{lastTransaction?.gambar && (<div className="bg-white dark:bg-neutral-900 p-2 rounded border border-neutral-200 dark:border-neutral-800 shadow-none"><p className="text-[10px] text-neutral-500 dark:text-neutral-500 mb-2 text-center font-semibold uppercase shadow-none">Bukti Pembayaran</p><div className="relative w-full h-32 rounded overflow-hidden bg-neutral-100 dark:bg-neutral-800 shadow-none"><Image src={lastTransaction.gambar} alt="Bukti" fill className="object-cover shadow-none" unoptimized /></div></div>)}<div className="space-y-3 shadow-none">{lastTransaction?.items.map((item, i) => (<div key={i} className="flex justify-between text-sm border-b border-dashed border-neutral-200 dark:border-neutral-800 pb-2 last:border-0 shadow-none"><div><span className="block font-medium text-neutral-700 dark:text-neutral-200 shadow-none">{item.name}</span><span className="text-[10px] text-neutral-400 dark:text-neutral-500 shadow-none">x{item.qty}</span></div><span suppressHydrationWarning className="font-bold text-neutral-900 dark:text-neutral-100 shadow-none">{(item.price * item.qty).toLocaleString('id-ID')}</span></div>))}</div><div className="bg-white dark:bg-neutral-900 p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-none"><div className="flex justify-between text-lg font-black text-neutral-900 dark:text-neutral-100 mb-2 shadow-none"><span>Total</span><span suppressHydrationWarning className="shadow-none">Rp {lastTransaction?.total.toLocaleString('id-ID')}</span></div><div className="text-xs text-neutral-500 dark:text-neutral-400 space-y-1 shadow-none"><div className="flex justify-between shadow-none"><span>Metode</span><span className="uppercase shadow-none">{lastTransaction?.metode_pembayaran}</span></div>{lastTransaction?.metode_pembayaran === 'tunai' && (<div className="flex justify-between text-green-600 dark:text-green-400 font-bold shadow-none"><span>Kembalian</span><span suppressHydrationWarning className="shadow-none">{lastTransaction?.kembalian.toLocaleString('id-ID')}</span></div>)}</div></div></div></div><div className="p-4 bg-white dark:bg-neutral-900 border-t border-neutral-100 dark:border-neutral-800 shrink-0 z-10 shadow-none"><div className="grid grid-cols-2 gap-3 shadow-none"><Button onClick={handlePrint} variant="outline" className="h-11 border-neutral-300 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800 dark:text-neutral-300 shadow-none"><Printer className="h-4 w-4 mr-2 shadow-none"/> Struk</Button><Button onClick={() => setOpenSuccess(false)} className="h-11 bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:opacity-90 shadow-none">Menu Baru</Button></div></div></div></DialogContent></Dialog>
+          <div className="flex flex-col h-[85vh] w-full bg-white dark:bg-neutral-900 rounded-2xl overflow-hidden border border-neutral-200 dark:border-neutral-800 shadow-none"><div className="bg-green-600 dark:bg-green-700 p-6 text-center text-white shrink-0 relative z-10 shadow-none"><div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3 backdrop-blur-sm shadow-none"><Utensils className="h-6 w-6 shadow-none" /></div><h3 className="text-xl font-bold shadow-none">Berhasil!</h3><p suppressHydrationWarning className="text-green-100 dark:text-green-200 text-xs mt-1 font-mono shadow-none">{lastTransaction && new Date(lastTransaction.created_at).toLocaleString('id-ID')}</p></div><div className="flex-1 overflow-y-auto bg-neutral-50 dark:bg-neutral-950 p-6 w-full shadow-none"><div className="space-y-6 shadow-none">{lastTransaction?.gambar && (<div className="bg-white dark:bg-neutral-900 p-2 rounded border border-neutral-200 dark:border-neutral-800 shadow-none"><p className="text-[10px] text-neutral-500 dark:text-neutral-500 mb-2 text-center font-semibold uppercase shadow-none">Bukti Pembayaran</p><div className="relative w-full h-32 rounded overflow-hidden bg-neutral-100 dark:bg-neutral-800 shadow-none"><Image src={lastTransaction.gambar} alt="Bukti" fill className="object-cover shadow-none" unoptimized /></div></div>)}<div className="space-y-3 shadow-none">{lastTransaction?.items.map((item, i) => (<div key={i} className="flex justify-between text-sm border-b border-dashed border-neutral-200 dark:border-neutral-800 pb-2 last:border-0 shadow-none"><div><span className="block font-medium text-neutral-700 dark:text-neutral-200 shadow-none">{item.name}</span><span className="text-[10px] text-neutral-400 dark:text-neutral-500 shadow-none">x{item.qty}</span></div><span suppressHydrationWarning className="font-bold text-neutral-900 dark:text-neutral-100 shadow-none">{(item.price * item.qty).toLocaleString('id-ID')}</span></div>))}</div><div className="bg-white dark:bg-neutral-900 p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-none"><div className="flex justify-between text-lg font-black text-neutral-900 dark:text-neutral-100 mb-2 shadow-none"><span>Total</span><span suppressHydrationWarning className="shadow-none">Rp {lastTransaction?.total.toLocaleString('id-ID')}</span></div><div className="text-xs text-neutral-500 dark:text-neutral-400 space-y-1 shadow-none"><div className="flex justify-between shadow-none"><span>Metode</span><span className="uppercase shadow-none">{lastTransaction?.metode_pembayaran}</span></div>{lastTransaction?.metode_pembayaran === 'tunai' && (<div className="flex justify-between text-green-600 dark:text-green-400 font-bold shadow-none"><span>Kembalian</span><span suppressHydrationWarning className="shadow-none">{lastTransaction?.kembalian.toLocaleString('id-ID')}</span></div>)}</div></div></div></div><div className="p-4 bg-white dark:bg-neutral-900 border-t border-neutral-100 dark:border-neutral-800 shrink-0 z-10 shadow-none"><div className="grid grid-cols-2 gap-3 shadow-none"><Button onClick={() => window.print()} variant="outline" className="h-11 border-neutral-300 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800 dark:text-neutral-300 shadow-none"><Printer className="h-4 w-4 mr-2 shadow-none"/> Struk</Button><Button onClick={() => setOpenSuccess(false)} className="h-11 bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:opacity-90 shadow-none">Menu Baru</Button></div></div></div></DialogContent></Dialog>
+      
       <style jsx global>{`
         @media print {
             body { background: white !important; color: black !important; }
