@@ -75,6 +75,7 @@ interface DeliveryOrder {
 
 const products: Product[] = [
   { id: 1, name: 'Cilok Ayam Suwir', price: 7000, category: 'Premium' },
+  { id: 2, name: 'Cilok Usus', price: 7000,category: 'Premium'},
 ]
 
 const categories = ["Semua", ...new Set(products.map(p => p.category))]
